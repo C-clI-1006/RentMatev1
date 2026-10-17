@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# Databases
+*.db
+*.sqlite3
+*.sqlite
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
