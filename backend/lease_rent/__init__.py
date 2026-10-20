@@ -5,6 +5,7 @@ cross-module adapters are added separately after the shared contracts have been
 reviewed by the affected owners.
 """
 
+from .fact_query import LeaseRentFactRepository, LeaseRentQueryService
 from .models import (
     LeaseDeadlineAlertCandidate,
     LeaseDeadlineAssessment,
@@ -14,6 +15,7 @@ from .models import (
     RentRecordInput,
     RentReminderCandidate,
     RentStatus,
+    VerifiedFactRecord,
 )
 from .rules import (
     assess_lease_deadline,
@@ -29,6 +31,8 @@ from .service import (
 )
 
 __all__ = [
+    "LeaseRentFactRepository",
+    "LeaseRentQueryService",
     "LeaseDeadlineAlertCandidate",
     "LeaseDeadlineAssessment",
     "LeaseDeadlineInput",
@@ -37,6 +41,7 @@ __all__ = [
     "RentRecordInput",
     "RentReminderCandidate",
     "RentStatus",
+    "VerifiedFactRecord",
     "assess_lease_deadline",
     "assess_rent",
     "lease_deadline_alert_key",

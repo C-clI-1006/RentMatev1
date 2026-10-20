@@ -5,7 +5,7 @@ the shared contracts while the team is still reviewing cross-module APIs.
 """
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 
@@ -92,4 +92,19 @@ class LeaseDeadlineAlertCandidate:
     end_date: date
     remaining_days: int
     prepared_on: date
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedFactRecord:
+    """One verified repository fact with enough metadata for provenance."""
+
+    name: str
+    value: str
+    observed_at: datetime
+    source_type: str
+    source_id: str
+    lease_id: str | None = None
+    version: str | None = None
+    snippet: str | None = None
+    stale_after: timedelta | None = None
 
