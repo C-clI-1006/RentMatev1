@@ -46,6 +46,7 @@ from .drafting import (
     ReviewRequest,
 )
 from .notification import (
+    DeliveryResult,
     INotificationService,
     NotificationEvent,
     NotificationKind,
