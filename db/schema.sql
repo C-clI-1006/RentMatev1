@@ -115,8 +115,12 @@ CREATE TABLE IF NOT EXISTS draft (
     message_id    TEXT REFERENCES message(message_id),
     request_id    TEXT REFERENCES maintenance_request(request_id),
     -- Origin provenance for system-generated drafts.
-    -- source_kind e.g. 'tenant_message' | 'rent_alert'
-    -- source_id   stable, deterministic, e.g. 'rent_alert:<alert_id>'
+    -- source_kind e.g. 'rent_reminder' | 'lease_deadline'
+    -- source_id   stable, deterministic. The adapter should reuse the
+    --             lease_rent candidate keys verbatim (see
+    --             lease_rent/rules.py rent_reminder_key /
+    --             lease_deadline_alert_key), e.g.
+    --             'rent-overdue:<rent_record_id>:<due_date>'.
     source_kind   TEXT,
     source_id     TEXT,
     version       INTEGER NOT NULL DEFAULT 1,

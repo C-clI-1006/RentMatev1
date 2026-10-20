@@ -25,17 +25,21 @@ def db() -> sqlite3.Connection:
 
 
 def test_system_generated_draft_without_message_id(db):
-    # UC5 reminder draft: origin is the rent alert, not a tenant message.
+    # UC5 reminder draft: origin is the rent reminder, not a tenant message.
+    # source_id reuses the lease_rent candidate key format verbatim
+    # (rent_reminder_key -> 'rent-overdue:<rent_record_id>:<due_date>').
+    source_id = "rent-overdue:rr-1:2026-10-01"
     db.execute(
         "INSERT INTO draft (draft_id, message_id, request_id, source_kind, "
         "source_id, content, created_at) VALUES "
-        "('d-1', NULL, NULL, 'rent_alert', 'rent_alert:ra-1', "
-        "'Reminder: rent due 2026-10-01', '2026-10-19T00:00:00Z')"
+        "('d-1', NULL, NULL, 'rent_reminder', ?, "
+        "'Reminder: rent due 2026-10-01', '2026-10-19T00:00:00Z')",
+        (source_id,),
     )
     row = db.execute(
         "SELECT message_id, source_kind, source_id FROM draft WHERE draft_id = 'd-1'"
     ).fetchone()
-    assert row == (None, "rent_alert", "rent_alert:ra-1")
+    assert row == (None, "rent_reminder", source_id)
 
 
 def test_duplicate_source_id_rejected(db):
@@ -48,9 +52,9 @@ def test_duplicate_source_id_rejected(db):
             (draft_id, source_id),
         )
 
-    insert("rent_alert:ra-1", "d-1")
+    insert("rent-overdue:rr-1:2026-10-01", "d-1")
     with pytest.raises(sqlite3.IntegrityError):
-        insert("rent_alert:ra-1", "d-2")
+        insert("rent-overdue:rr-1:2026-10-01", "d-2")
 
 
 def test_tenant_message_draft_still_works(db):
