@@ -70,3 +70,26 @@ class LeaseDeadlineInput:
     start_date: date
     end_date: date
 
+
+@dataclass(frozen=True, slots=True)
+class RentReminderCandidate:
+    """Traceable UC4 data ready to be adapted into a reviewable draft."""
+
+    candidate_key: str
+    rent_record_id: str
+    due_date: date
+    outstanding_amount: Decimal
+    overdue_days: int
+    prepared_on: date
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseDeadlineAlertCandidate:
+    """Traceable UC5 data ready to be adapted into a reviewable alert."""
+
+    candidate_key: str
+    lease_id: str
+    end_date: date
+    remaining_days: int
+    prepared_on: date
+

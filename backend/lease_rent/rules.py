@@ -95,17 +95,10 @@ def rent_reminder_key(record: RentRecordInput) -> str:
     return f"rent-overdue:{record.rent_record_id}:{record.due_date.isoformat()}"
 
 
-def lease_deadline_alert_key(
-    lease: LeaseDeadlineInput, *, reminder_window_days: int
-) -> str:
+def lease_deadline_alert_key(lease: LeaseDeadlineInput) -> str:
     """Return a stable key used to prevent duplicate deadline alerts."""
 
-    if reminder_window_days < 0:
-        raise ValueError("reminder_window_days cannot be negative")
-    return (
-        f"lease-deadline:{lease.lease_id}:{lease.end_date.isoformat()}:"
-        f"{reminder_window_days}d"
-    )
+    return f"lease-deadline:{lease.lease_id}:{lease.end_date.isoformat()}"
 
 
 def _validate_amounts(amount_due: Decimal, amount_paid: Decimal) -> None:

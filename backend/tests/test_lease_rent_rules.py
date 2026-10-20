@@ -170,6 +170,6 @@ def test_deduplication_keys_are_stable_and_scenario_specific():
 
     assert rent_reminder_key(record) == "rent-overdue:rent-1:2026-10-01"
     assert (
-        lease_deadline_alert_key(lease, reminder_window_days=30)
-        == "lease-deadline:lease-1:2026-12-31:30d"
+        lease_deadline_alert_key(lease)
+        == "lease-deadline:lease-1:2026-12-31"
     )
