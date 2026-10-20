@@ -82,6 +82,13 @@ Database: `rentmate.db` is created from `db/schema.sql` on first run (see
 | lease_rent module           | Ziheng |
 | evidence module             | Jenny  |
 | reporting module            | Sharon |
+| notification module         | Chaney |
+| review module               | Chaney |
+| repositories (SQLite)       | Chaney |
+
+Note: `db/schema.sql` sections are owned per table (see section comments in
+the file): lease/rent tables → Ziheng, drafts/review tables → Chaney,
+outbox → Chaney. Contract changes follow `backend/contracts/README.md`.
 
 Contract changes: propose in `backend/contracts/`, review by the two affected
 owners, then update the affected models/tests. See

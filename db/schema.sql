@@ -108,8 +108,17 @@ CREATE INDEX IF NOT EXISTS idx_rent_property_period ON rent_record (property_id,
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS draft (
     draft_id      TEXT PRIMARY KEY,
-    message_id    TEXT NOT NULL REFERENCES message(message_id),
+    -- message_id is the origin for drafts replying to a tenant message.
+    -- System-generated drafts (e.g. UC5 rent reminders) have no inbound
+    -- message; their origin is (source_kind, source_id) instead.
+    -- Invariant: exactly one of message_id / source_id is set.
+    message_id    TEXT REFERENCES message(message_id),
     request_id    TEXT REFERENCES maintenance_request(request_id),
+    -- Origin provenance for system-generated drafts.
+    -- source_kind e.g. 'tenant_message' | 'rent_alert'
+    -- source_id   stable, deterministic, e.g. 'rent_alert:<alert_id>'
+    source_kind   TEXT,
+    source_id     TEXT,
     version       INTEGER NOT NULL DEFAULT 1,
     audience      TEXT NOT NULL DEFAULT 'tenant', -- tenant | manager
     content       TEXT NOT NULL,
@@ -120,6 +129,10 @@ CREATE TABLE IF NOT EXISTS draft (
 );
 
 CREATE INDEX IF NOT EXISTS idx_draft_message ON draft (message_id);
+-- Idempotency for system-generated drafts: one draft per source
+-- (re-runs of a scheduled job must not create a second review item).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_draft_source ON draft (source_id)
+    WHERE source_id IS NOT NULL;
 
 -- Approval is bound to a specific draft version. final_content is the exact
 -- text that may be delivered; the sending path reads ONLY from here.
