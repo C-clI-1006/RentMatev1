@@ -82,6 +82,39 @@ def test_tenant_message_draft_still_works(db):
     assert row == ("m-1", None)
 
 
+def test_rent_record_has_due_date_and_no_partial_status(db):
+    # due_date drives the UC5 scheduler; partial payment is DATA
+    # (amount_paid < amount_due), not a status.
+    cols = {r[1] for r in db.execute("PRAGMA table_info(rent_record)")}
+    assert "due_date" in cols
+
+    db.execute(
+        "INSERT INTO tenant (tenant_id, name, created_at) VALUES "
+        "('t-1', 'T', '2026-01-01T00:00:00Z')"
+    )
+    db.execute(
+        "INSERT INTO property (property_id, name, created_at) VALUES "
+        "('p-1', 'P', '2026-01-01T00:00:00Z')"
+    )
+    db.execute(
+        "INSERT INTO lease (lease_id, property_id, tenant_id, start_date, "
+        "end_date, created_at) VALUES ('l-1', 'p-1', 't-1', '2026-09-01', "
+        "'2026-12-31', '2026-08-01T00:00:00Z')"
+    )
+    # Partial payment stored as data; status stays one of the three agreed.
+    db.execute(
+        "INSERT INTO rent_record (rent_record_id, lease_id, property_id, "
+        "period, due_date, amount_due, amount_paid, status, created_at) "
+        "VALUES ('rr-1', 'l-1', 'p-1', '2026-10', '2026-10-01', 2000, 1000, "
+        "'overdue', '2026-10-01T00:00:00Z')"
+    )
+    row = db.execute(
+        "SELECT due_date, amount_due, amount_paid, status FROM rent_record "
+        "WHERE rent_record_id = 'rr-1'"
+    ).fetchone()
+    assert row == ("2026-10-01", 2000, 1000, "overdue")
+
+
 def test_main_app_imports_cleanly():
     # The UC5 ops endpoint is wired in main.py; importing the app must not
     # require lease_rent to be implemented yet (import is deferred).

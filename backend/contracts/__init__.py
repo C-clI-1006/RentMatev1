@@ -40,6 +40,7 @@ from .lease_rent import (
 )
 from .drafting import (
     Draft,
+    DraftSourceKind,
     DraftStatus,
     ReviewDecisionRecord,
     ReviewRequest,
@@ -83,6 +84,7 @@ __all__ = [
     "QuestionType",
     # drafting / review
     "Draft",
+    "DraftSourceKind",
     "DraftStatus",
     "ReviewDecisionRecord",
     "ReviewRequest",

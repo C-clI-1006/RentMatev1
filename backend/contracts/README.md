@@ -28,6 +28,9 @@ interaction. Source: Stage 1 guide §18 (interface contracts), §13
 - Intake results are a mutually exclusive 3-way split.
 - Approval binds to a `draft_version`; delivery reads only the approved
   version; rejection ⇒ no tenant message.
+- Draft origin: exactly one of `message_id` / `source_id` is set.
+  System-generated drafts carry `source_id` reusing the lease_rent
+  candidate keys verbatim, so scheduled re-runs stay idempotent.
 - `ACCEPTED` ≠ `DELIVERED`; failures are `failed` / `pending_retry`,
   never silent success.
 - Dedup by stable `event_id` (+ `recipient_id` for notifications);

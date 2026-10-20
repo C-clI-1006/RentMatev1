@@ -10,6 +10,14 @@ Rules:
 - `tone_hint` (e.g. from optional sentiment detection) may influence
   tone only. It can never weaken review or authorisation rules.
 - `source_facts` records what grounded the draft (traceability).
+- Draft origin: EXACTLY ONE of `message_id` / `source_id` is set.
+  - Reply to a tenant message: `message_id` set, `source_*` NULL.
+  - System-generated (UC5 rent reminder / lease deadline alert):
+    `source_kind` + `source_id` set, `message_id` NULL.
+  `source_id` reuses the lease_rent candidate keys verbatim (see
+  `lease_rent.rules.rent_reminder_key` / `lease_deadline_alert_key`),
+  so scheduled re-runs are idempotent — the unique index on
+  `draft.source_id` rejects a second draft for the same alert.
 """
 
 from __future__ import annotations
@@ -18,10 +26,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .common import DraftId, MessageId, RequestId, ReviewId
 from .lease_rent import FactReference
+
+# Origin kinds for system-generated drafts. New kinds require a contract
+# change (PR reviewed by both affected module owners).
+DraftSourceKind = Literal["rent_reminder", "lease_deadline"]
 
 
 class DraftStatus(str, Enum):
@@ -34,7 +46,10 @@ class DraftStatus(str, Enum):
 
 class Draft(BaseModel):
     draft_id: DraftId
-    message_id: MessageId
+    # Origin (exactly one of these pairs, see module docstring):
+    message_id: MessageId | None = None  # reply to an inbound tenant message
+    source_kind: DraftSourceKind | None = None  # system-generated origin
+    source_id: str | None = None  # stable dedup key (see module docstring)
     request_id: RequestId | None = None
     version: int = 1
     audience: Literal["tenant", "manager"] = "tenant"
@@ -44,6 +59,21 @@ class Draft(BaseModel):
     status: DraftStatus = DraftStatus.PENDING_REVIEW
     created_at: datetime  # UTC
 
+    @model_validator(mode="after")
+    def _origin_is_exactly_one(self) -> "Draft":
+        has_message = self.message_id is not None
+        has_source = self.source_id is not None
+        if has_message and has_source:
+            raise ValueError(
+                "message_id and source_id are mutually exclusive "
+                "(a draft has exactly one origin)"
+            )
+        if not has_message and not has_source:
+            raise ValueError("one of message_id / source_id must be set")
+        if has_source and self.source_kind is None:
+            raise ValueError("a draft with source_id also needs source_kind")
+        return self
+
 
 class ReviewRequest(BaseModel):
     """What the manager sees: original message, grounded facts, draft,
@@ -51,8 +81,10 @@ class ReviewRequest(BaseModel):
 
     review_id: ReviewId
     draft: Draft
-    original_message: str
-    reason: str  # e.g. "first contact about this request" / "urgent"
+    # NULL for system-generated drafts (e.g. UC5 rent reminder) that have
+    # no inbound tenant message; set for reply-to-message drafts.
+    original_message: str | None = None
+    reason: str  # e.g. "scheduled rent overdue alert" / "first contact"
     source_facts: list[FactReference] = Field(default_factory=list)
 
 

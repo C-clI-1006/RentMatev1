@@ -94,14 +94,21 @@ CREATE TABLE IF NOT EXISTS rent_record (
     lease_id       TEXT NOT NULL REFERENCES lease(lease_id),
     property_id    TEXT NOT NULL REFERENCES property(property_id),
     period         TEXT NOT NULL, -- e.g. "2026-09"
+    due_date       TEXT NOT NULL, -- ISO date; drives UC5 reminder/overdue alerts
     amount_due     REAL,
-    amount_paid    REAL,
+    amount_paid    REAL, -- may be < amount_due (partial payment as data)
     paid_at        TEXT,
-    status         TEXT NOT NULL DEFAULT 'unpaid', -- unpaid | partial | paid | overdue
+    -- Computed from due_date + amounts at "as of" time; only these three:
+    -- paid | unpaid-but-not-due | overdue. There is deliberately NO
+    -- 'partial' state — partial payment is expressed via
+    -- amount_paid < amount_due (agreed decision, see lease_rent.rules).
+    status         TEXT NOT NULL DEFAULT 'unpaid-but-not-due',
     created_at     TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_rent_property_period ON rent_record (property_id, period);
+-- UC5 scheduler scans for due/overdue records by due_date.
+CREATE INDEX IF NOT EXISTS idx_rent_due ON rent_record (due_date);
 
 -- ---------------------------------------------------------------------------
 -- Drafts & review (owned: communication + review)
