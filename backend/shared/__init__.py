@@ -6,6 +6,35 @@
 - utcnow(): timezone-aware UTC timestamp helper.
 """
 
-from .context import AuthContext, new_id, utcnow
+from __future__ import annotations
 
-__all__ = ["AuthContext", "new_id", "utcnow"]
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from contracts.common import PropertyId, TenantId
+
+
+def utcnow() -> datetime:
+    """Timezone-aware UTC now. All persisted timestamps use this."""
+    return datetime.now(timezone.utc)
+
+
+def new_id() -> str:
+    """A fresh stable UUID4 string for IDs generated at the owning module."""
+    return str(uuid.uuid4())
+
+
+@dataclass(frozen=True)
+class AuthContext:
+    """Identity + scope resolved at the entry point from the session.
+
+    Business code reads `tenant_id` / `property_id` ONLY from here. The
+    tenant<->property binding is verified at the entry point (see
+    repositories binding checks); these values are never taken from
+    user input.
+    """
+
+    tenant_id: TenantId
+    property_id: PropertyId
+    manager_id: str | None = None  # set for manager-facing entry points
