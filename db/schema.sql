@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS draft (
     audience      TEXT NOT NULL DEFAULT 'tenant', -- tenant | manager
     content       TEXT NOT NULL,
     tone_hint     TEXT, -- informational only
+    -- Why review is required (shown to the manager) + what grounded the
+    -- draft (JSON list of FactReference). Persisted by communication so
+    -- the review queue can show the full context across processes.
+    review_reason TEXT,
+    source_facts  TEXT, -- JSON: [{source_type, source_id, version, snippet}]
     status        TEXT NOT NULL DEFAULT 'pending_review',
         -- pending_review | approved | rejected | superseded | sent
     created_at    TEXT NOT NULL

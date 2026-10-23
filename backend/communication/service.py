@@ -396,10 +396,14 @@ class CommunicationService:
         )
         self._conn.execute(
             "INSERT INTO draft (draft_id, message_id, request_id, content, "
-            "tone_hint, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending_review', ?)",
+            "tone_hint, review_reason, source_facts, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)",
             (
                 draft.draft_id, message_id, request_id, content,
-                draft.tone_hint, now.isoformat().replace("+00:00", "Z"),
+                draft.tone_hint, reason,
+                json.dumps([ref.model_dump(mode="json") for ref in (fact_refs or [])],
+                           ensure_ascii=False),
+                now.isoformat().replace("+00:00", "Z"),
             ),
         )
         self._conn.commit()
