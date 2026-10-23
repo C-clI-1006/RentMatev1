@@ -106,4 +106,3 @@ def _validate_amounts(amount_due: Decimal, amount_paid: Decimal) -> None:
         raise ValueError("amount_due cannot be negative")
     if amount_paid < 0:
         raise ValueError("amount_paid cannot be negative")
-

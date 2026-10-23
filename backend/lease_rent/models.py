@@ -107,4 +107,3 @@ class VerifiedFactRecord:
     version: str | None = None
     snippet: str | None = None
     stale_after: timedelta | None = None
-
