@@ -34,6 +34,33 @@ CREATE TABLE IF NOT EXISTS tenant_property (
 );
 
 -- ---------------------------------------------------------------------------
+-- Managers & property assignments (owned: permissions)
+--
+-- A manager is a trusted staff identity, distinct from a tenant. Scope is
+-- explicit and verified: a manager may only touch the properties bound in
+-- manager_property. NO binding => default deny (see permissions service).
+-- Manager identity comes from the server-side auth context only; it is never
+-- accepted from a request body or header.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS manager (
+    manager_id  TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+-- Verified manager<->property assignment. A manager may be bound to several
+-- properties (one row each); each binding is independently verified.
+CREATE TABLE IF NOT EXISTS manager_property (
+    manager_id  TEXT NOT NULL REFERENCES manager(manager_id),
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (manager_id, property_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manager_property_property
+    ON manager_property (property_id);
+
+-- ---------------------------------------------------------------------------
 -- Inbound tenant messages (owned: communication)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS message (
