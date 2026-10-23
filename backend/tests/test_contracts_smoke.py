@@ -36,7 +36,9 @@ def _now() -> datetime:
 
 
 def test_intake_registered_shape():
-    result = RegisteredIntake(request_id="req-1", persisted_status="submitted")
+    result = RegisteredIntake(
+        request_id="req-1", persisted_status="submitted", priority="routine"
+    )
     assert result.status == "registered"
     assert result.persisted_status == "submitted"
     # The three outcomes are mutually exclusive by the `status` discriminator.
