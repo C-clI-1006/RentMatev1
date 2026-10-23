@@ -27,9 +27,20 @@ interaction. Source: Stage 1 guide §18 (interface contracts), §13
 
 - Intake results are a mutually exclusive 3-way split.
 - Approval binds to a `draft_version`; delivery reads only the approved
-  version; rejection ⇒ no tenant message.
+  version; rejection ⇒ no tenant message. The pending proposal below
+  adds a separate routine-reply eligibility path; it is not yet an approved
+  change to this baseline invariant.
 - `ACCEPTED` ≠ `DELIVERED`; failures are `failed` / `pending_retry`,
   never silent success.
 - Dedup by stable `event_id` (+ `recipient_id` for notifications);
   single retry owner.
 - Identity/scope (`tenant_id`, `property_id`) always from auth context.
+
+
+## Pending conditional-review proposal
+
+`AUTO_ELIGIBLE` distinguishes routine reply eligibility from manager approval
+and delivery. Review-required replies and system rent/lease reminders retain
+version-bound manager approval. Notification accepts only the appropriate exact
+version after scope/policy recheck. This proposal requires communication,
+review and notification owner review; it is not recorded as approved.

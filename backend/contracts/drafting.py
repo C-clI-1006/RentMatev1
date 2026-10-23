@@ -3,8 +3,11 @@
 Rules:
 - A draft is versioned. A manager approval is bound to a SPECIFIC
   `draft_version` (plus any manager-edit final content). The sending
-  path may only read the approved version — no model re-generation
-  after approval.
+  path for review-required replies may only read the approved version.
+  PROPOSAL: routine AUTO_ELIGIBLE replies use the exact policy-evaluated
+  version without a fabricated approval. Recheck scope and policy before
+  dispatch; no model re-generation after authorisation. System-generated
+  rent/lease reminders always require manager approval.
 - Rejection means NO tenant message. Rejections must be visible to the
   manager UI with the reason.
 - `tone_hint` (e.g. from optional sentiment detection) may influence
@@ -25,6 +28,12 @@ from .lease_rent import FactReference
 
 
 class DraftStatus(str, Enum):
+    # PROPOSAL (FR-COM-04/05): `AUTO_ELIGIBLE` marks a draft whose deterministic
+    # policy found no review trigger. It is an ELIGIBILITY marker only —
+    # it is not a delivery mechanism. Dispatch to the tenant still flows
+    # through the shared notification path (audit, dedup, permission
+    # re-check). No manager review record exists for these drafts.
+    AUTO_ELIGIBLE = "auto_eligible"
     PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
     REJECTED = "rejected"
