@@ -94,21 +94,40 @@ CREATE TABLE IF NOT EXISTS rent_record (
     lease_id       TEXT NOT NULL REFERENCES lease(lease_id),
     property_id    TEXT NOT NULL REFERENCES property(property_id),
     period         TEXT NOT NULL, -- e.g. "2026-09"
-    due_date       TEXT NOT NULL, -- ISO date; drives UC5 reminder/overdue alerts
-    amount_due     REAL,
-    amount_paid    REAL, -- may be < amount_due (partial payment as data)
+    due_date       TEXT NOT NULL, -- ISO date; drives UC4/UC5 overdue + reminder alerts
+    amount_due     REAL CHECK (amount_due IS NULL OR amount_due >= 0),
+    amount_paid    REAL CHECK (amount_paid IS NULL OR amount_paid >= 0),
+        -- may be < amount_due (partial payment as data)
     paid_at        TEXT,
     -- Computed from due_date + amounts at "as of" time; only these three:
     -- paid | unpaid-but-not-due | overdue. There is deliberately NO
     -- 'partial' state — partial payment is expressed via
     -- amount_paid < amount_due (agreed decision, see lease_rent.rules).
-    status         TEXT NOT NULL DEFAULT 'unpaid-but-not-due',
+    status         TEXT NOT NULL DEFAULT 'unpaid-but-not-due'
+        CHECK (status IN ('paid', 'unpaid-but-not-due', 'overdue')),
     created_at     TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_rent_property_period ON rent_record (property_id, period);
 -- UC5 scheduler scans for due/overdue records by due_date.
 CREATE INDEX IF NOT EXISTS idx_rent_due ON rent_record (due_date);
+
+-- UC5 detection record (owned: lease_rent). The stable candidate key makes
+-- scheduled re-runs idempotent before a cross-module Draft is created.
+CREATE TABLE IF NOT EXISTS lease_deadline_alert (
+    alert_id       TEXT PRIMARY KEY,
+    candidate_key  TEXT NOT NULL UNIQUE,
+    lease_id       TEXT NOT NULL REFERENCES lease(lease_id),
+    tenant_id      TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    end_date       TEXT NOT NULL,
+    remaining_days INTEGER NOT NULL CHECK (remaining_days >= 0),
+    prepared_on    TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_deadline_alert_lease
+    ON lease_deadline_alert (lease_id, end_date);
 
 -- ---------------------------------------------------------------------------
 -- Drafts & review (owned: communication + review)

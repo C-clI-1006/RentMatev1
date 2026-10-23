@@ -23,6 +23,7 @@ from contracts.maintenance import (
     IntakeResult,
     MaintenanceIntake,
     NeedsClarificationIntake,
+    Priority,
     RegisteredIntake,
 )
 from contracts.notification import (
@@ -39,9 +40,15 @@ def _now() -> datetime:
 
 
 def test_intake_registered_shape():
-    result = RegisteredIntake(request_id="req-1", persisted_status="submitted")
+    result = RegisteredIntake(
+        request_id="req-1",
+        persisted_status="submitted",
+        priority=Priority.ROUTINE,
+    )
     assert result.status == "registered"
     assert result.persisted_status == "submitted"
+    # a235805: priority is assessed at registration (FR-MC-02)
+    assert result.priority == Priority.ROUTINE
     # The three outcomes are mutually exclusive by the `status` discriminator.
     assert RegisteredIntake.model_fields["status"].default == "registered"
     assert NeedsClarificationIntake.model_fields["status"].default == "needs_clarification"

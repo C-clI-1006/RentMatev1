@@ -30,6 +30,7 @@ from contracts import (
     INotificationService,
     MaintenanceStatus,
     NeedsClarificationIntake,
+    Priority,
     NotificationStatus,
     RegisteredIntake,
     DeliveryResult,
@@ -165,6 +166,7 @@ def make_service(
                 status="registered",
                 request_id="req-1",
                 persisted_status=MaintenanceStatus.SUBMITTED,
+                priority=Priority.ROUTINE,
             ),
             db,
         ),
@@ -243,6 +245,7 @@ def test_maintenance_registered_drafts_ack(db):
             status="registered",
             request_id="req-1",
             persisted_status=MaintenanceStatus.SUBMITTED,
+            priority=Priority.ROUTINE,
         ),
         db,
     )
