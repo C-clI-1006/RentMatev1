@@ -11,7 +11,7 @@ Responsibilities (guide Ch.13):
 - Optional sentiment: tone hint only; never weakens review.
 
 Implemented: `service.CommunicationService` (intake -> classify ->
-route -> fact-grounded pending_review draft). The classifier is a
+route -> fact-grounded, conditionally reviewed draft). The classifier is a
 labelled test double (llm.classifier.KeywordClassifier) until the
 school Qwen proxy is confirmed working.
 """

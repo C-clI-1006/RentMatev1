@@ -13,9 +13,9 @@ Flow (one inbound tenant message):
       maintenance -> IMaintenanceIntake.submit_issue (UC1)
       lease_rent  -> ILeaseRentQuery.get_facts (UC2)
       smalltalk   -> simple acknowledgement draft (no module call)
- 5. Drafting grounded ONLY in returned facts (no fabrication). Every
-    tenant reply is a pending_review draft; the send path is owned by
-    review + notification and must use the approved version only.
+ 5. Drafting grounded ONLY in returned facts (no fabrication). A deterministic
+    policy selects auto-eligible or manager-review drafts. Eligibility is
+    not delivery: this service does not dispatch tenant replies.
  6. Delivery-result recording is truthful: ACCEPTED is queued, NOT sent.
 """
 
@@ -31,6 +31,9 @@ from contracts import (
     Draft,
     DraftStatus,
     EventId,
+    NotificationEvent,
+    NotificationKind,
+    Priority,
     IMaintenanceIntake,
     ILeaseRentQuery,
     INotificationService,
@@ -51,6 +54,7 @@ from contracts.lease_rent import (
     LeaseRentFactResult,
     LeaseRentQuery,
 )
+from . import policy, templates
 from llm.classifier import BaseClassifier, Category, KeywordClassifier
 from shared import AuthContext, new_id, utcnow
 
@@ -95,7 +99,20 @@ class CommunicationOutcome(BaseModel):
     intake: IntakeResult | None = None  # UC1 result, when routed
     fact_result: LeaseRentFactResult | None = None  # UC2 result, when routed
     draft: Draft | None = None  # pending tenant reply (None: no auto reply)
-    review: ReviewRequest | None = None  # what the manager will see
+    review: ReviewRequest | None = None  # only when review is required
+    eligibility: policy.EligibilityDecision | None = None
+    emergency_alert: policy.EmergencyAlert | None = None
+    dispatch_state: Literal["not_dispatched"] = "not_dispatched"
+
+    def tenant_response(self) -> dict:
+        """Allowlisted acknowledgement; internal drafts/facts stay private.
+
+        The future HTTP layer must authenticate and authorise the caller.
+        This projection does not itself authenticate or deliver a reply.
+        """
+        return {"message_id": self.message_id,
+                "reply_status": self.draft.status.value if self.draft else "manual_handling",
+                "delivery_status": self.dispatch_state}
 
 
 class CommunicationService:
@@ -114,12 +131,14 @@ class CommunicationService:
         lease_rent: ILeaseRentQuery,
         notification: INotificationService | None = None,
         classifier: BaseClassifier | None = None,
+        emergency_terms: tuple[str, ...] | None = None,
     ) -> None:
         self._conn = conn
         self._maintenance = maintenance
         self._lease_rent = lease_rent
         self._notification = notification
         self._classifier = classifier or KeywordClassifier()
+        self._emergency_terms = emergency_terms or policy.DEFAULT_EMERGENCY_TERMS
 
     # ------------------------------------------------------------------
     # Entry point
@@ -133,12 +152,19 @@ class CommunicationService:
 
         message_id = MessageId(new_id())
         now = utcnow()
-        raw = self._classifier.classify(content)
+        try:
+            raw = self._classifier.classify(content)
+        except Exception:
+            raw = None  # classifier failure never authorises an automatic reply
+        emergency = policy.has_emergency_indicator(content, self._emergency_terms)
+        # Persist before any external call, including manager notification.
+        self._store_message(message_id, auth, content,
+                            raw.category.value if raw else "unknown", now)
+        alert = self._attempt_emergency_alert(auth, message_id) if emergency else None
 
         if raw is None:
             # Binding rule: invalid model output is NOT "unknown"; it is
             # invalid -> human handoff. We still store the message.
-            self._store_message(message_id, auth, content, "unknown", now)
             self._audit(
                 "message.classified_invalid", message_id,
                 {"tenant_id": auth.tenant_id, "property_id": auth.property_id},
@@ -146,169 +172,143 @@ class CommunicationService:
             return CommunicationOutcome(
                 message_id=message_id, category=None,
                 routed_to="human",
-                handoff_reason="classifier output invalid",
+                handoff_reason="classifier output invalid", emergency_alert=alert,
             )
 
         category = raw.category
-        self._store_message(message_id, auth, content, category.value, now)
-
+        triggers = []
+        if emergency:
+            triggers.append(policy.ReviewReason.EMERGENCY)
+        if policy.is_decision_request(content):
+            triggers.append(policy.ReviewReason.DECISION_REQUEST)
         if category is Category.MAINTENANCE:
-            return self._route_maintenance(auth, message_id, content, now)
-        if category is Category.LEASE_RENT:
-            return self._route_lease_rent(auth, message_id, content, now)
-        if category is Category.SMALLTALK:
-            return self._route_smalltalk(message_id, content)
-        # UNKNOWN (valid but no clear signal) -> human handoff, no reply.
-        return self._handoff(
-            message_id, "classification unclear (unknown)", category="unknown"
-        )
+            outcome = self._route_maintenance(auth, message_id, content, now, triggers, alert)
+        elif category is Category.LEASE_RENT:
+            outcome = self._route_lease_rent(auth, message_id, content, now, triggers)
+        elif category is Category.SMALLTALK:
+            outcome = self._route_smalltalk(message_id, content, triggers)
+        else:
+            outcome = self._handoff(message_id, "classification unclear (unknown)",
+                                    category="unknown")
+        if outcome.emergency_alert is None:
+            outcome.emergency_alert = alert
+        return outcome
 
     # ------------------------------------------------------------------
     # UC1: maintenance routing
     # ------------------------------------------------------------------
-    def _route_maintenance(
-        self, auth: AuthContext, message_id: MessageId, content: str, now
-    ) -> CommunicationOutcome:
+    def _route_maintenance(self, auth, message_id, content, now, triggers, alert):
         intake = MaintenanceIntake(
-            message_id=message_id,
-            tenant_id=TenantId(auth.tenant_id),
-            property_id=PropertyId(auth.property_id),
-            title=self._title(content),
-            description=content,
-            location=None,
-            event_id=intake_event_id(message_id),
+            message_id=message_id, tenant_id=TenantId(auth.tenant_id),
+            property_id=PropertyId(auth.property_id), title=self._title(content),
+            description=content, location=None, event_id=intake_event_id(message_id),
             submitted_at=now,
         )
-        result = self._maintenance.submit_issue(intake)
-        self._audit(
-            f"intake.{result.status}", message_id,
-            {
-                "event_id": intake.event_id,
-                "request_id": getattr(result, "request_id", None),
-                "missing_fields": getattr(result, "missing_fields", None),
-                "code": getattr(result, "code", None),
-            },
-        )
-
+        try:
+            result = self._maintenance.submit_issue(intake)
+        except Exception:
+            return self._handoff(message_id, "maintenance service unavailable",
+                                 category="maintenance")
+        self._audit(f"intake.{result.status}", message_id,
+                    {"request_id": getattr(result, "request_id", None)})
+        if result.status == "failed":
+            return self._handoff(message_id, f"maintenance intake failed (code={result.code})",
+                                 category="maintenance", intake=result)
+        triggers = list(triggers)
+        refs, request_id = [], None
         if result.status == "registered":
-            draft, review = self._draft_reply(
-                message_id=message_id,
-                request_id=result.request_id,
-                content=(
-                    "Thanks — I've logged a maintenance request "
-                    f"({result.request_id}) for your property. Our team "
-                    "will follow up with you."
-                ),
-                reason="maintenance intake acknowledgement (first contact)",
-                fact_refs=[
-                    _system_fact_ref(result.request_id, "maintenance request registered"),
-                ],
-            )
-            return CommunicationOutcome(
-                message_id=message_id, category="maintenance",
-                routed_to="maintenance", intake=result,
-                draft=draft, review=review,
-            )
-        if result.status == "needs_clarification":
-            fields = ", ".join(result.missing_fields)
-            draft, review = self._draft_reply(
-                message_id=message_id,
-                request_id=None,
-                content=(
-                    "Thanks for the report. To get started I'd need a "
-                    f"bit more detail: {fields}."
-                ),
-                reason="maintenance intake — clarification request",
-            )
-            return CommunicationOutcome(
-                message_id=message_id, category="maintenance",
-                routed_to="maintenance", intake=result,
-                draft=draft, review=review,
-            )
-        # Failed intake: no automatic tenant reply; the maintenance module
-        # owns the failure record. Human handles it.
-        return self._handoff(
-            message_id, f"maintenance intake failed (code={result.code})",
-            category="maintenance",
-            intake=result,
-        )
-
-    # ------------------------------------------------------------------
-    # UC2: lease & rent routing
-    # ------------------------------------------------------------------
-    def _route_lease_rent(
-        self, auth: AuthContext, message_id: MessageId, content: str, now
-    ) -> CommunicationOutcome:
-        query = LeaseRentQuery(
-            message_id=message_id,
-            tenant_id=TenantId(auth.tenant_id),
-            property_id=PropertyId(auth.property_id),
-            question_type=self._question_type(content),
-            question=content,
-            as_of=now,
-        )
-        result = self._lease_rent.get_facts(query)
-        self._audit(
-            "lease_rent.queried", message_id,
-            {"availability": result.availability.value,
-             "question_type": query.question_type.value},
-        )
-
-        availability = result.availability
-        if availability is FactAvailability.AVAILABLE:
-            content_out = self._reply_from_facts(result.facts)
-            draft, review = self._draft_reply(
-                message_id=message_id,
-                request_id=None,
-                content=content_out,
-                reason="lease/rent fact-grounded reply",
-                fact_refs=self._fact_refs(result.facts),
-            )
-            return CommunicationOutcome(
-                message_id=message_id, category="lease_rent",
-                routed_to="lease_rent", fact_result=result,
-                draft=draft, review=review,
-            )
-        if availability is FactAvailability.NOT_AVAILABLE:
-            note = result.note or "no matching record found"
-            draft, review = self._draft_reply(
-                message_id=message_id,
-                request_id=None,
-                content=(
-                    "I couldn't find verified information about that in "
-                    f"our records ({note}). I've passed this to our team "
-                    "to follow up with you."
-                ),
-                reason="lease/rent reply — facts not available",
-            )
-            return CommunicationOutcome(
-                message_id=message_id, category="lease_rent",
-                routed_to="lease_rent", fact_result=result,
-                draft=draft, review=review,
-            )
-        # AUTHORIZATION_DENIED / CONFLICT: never auto-reply; a human looks.
-        return self._handoff(
-            message_id,
-            f"lease/rent facts unavailable: {availability.value}",
-            category="lease_rent",
-            fact_result=result,
-        )
-
-    # ------------------------------------------------------------------
-    # Smalltalk
-    # ------------------------------------------------------------------
-    def _route_smalltalk(self, message_id: MessageId, content: str) -> CommunicationOutcome:
+            request_id = result.request_id
+            if result.priority is Priority.EMERGENCY:
+                triggers.append(policy.ReviewReason.EMERGENCY)
+                if alert is None:
+                    alert = self._attempt_emergency_alert(auth, message_id)
+            reply = templates.maintenance_confirmation(request_id, result.persisted_status.value)
+            refs = [_system_fact_ref(request_id, "maintenance request registered")]
+        else:
+            reply = templates.clarification(result.missing_fields)
+        # Only a narrow, explicit repair report qualifies without review.
+        decision = policy.decide(policy.is_routine_maintenance(content), *triggers)
         draft, review = self._draft_reply(
-            message_id=message_id,
-            request_id=None,
-            content="Thanks for your message! How can I help you with your "
-                    "rental today?",
-            reason="smalltalk acknowledgement",
-        )
-        return CommunicationOutcome(
-            message_id=message_id, category="smalltalk",
-            routed_to="smalltalk", draft=draft, review=review,
-        )
+            message_id=message_id, request_id=request_id, content=reply,
+            decision=decision, fact_refs=refs)
+        return CommunicationOutcome(message_id=message_id, category="maintenance",
+                                    routed_to="maintenance", intake=result, draft=draft,
+                                    review=review, eligibility=decision, emergency_alert=alert)
+
+    def _route_lease_rent(self, auth, message_id, content, now, triggers):
+        query = LeaseRentQuery(message_id=message_id, tenant_id=TenantId(auth.tenant_id),
+                               property_id=PropertyId(auth.property_id),
+                               question_type=self._question_type(content),
+                               question=content, as_of=now)
+        try:
+            result = self._lease_rent.get_facts(query)
+        except Exception:
+            return self._handoff(message_id, "lease/rent service unavailable", category="lease_rent")
+        self._audit("lease_rent.queried", message_id, {"availability": result.availability.value})
+        if result.availability in (FactAvailability.AUTHORIZATION_DENIED, FactAvailability.CONFLICT):
+            # Do not return potentially unauthorised facts even as internal outcome data.
+            return self._handoff(message_id, f"lease/rent facts unavailable: {result.availability.value}",
+                                 category="lease_rent")
+        triggers = list(triggers)
+        facts = result.facts if result.availability is FactAvailability.AVAILABLE else []
+        if not facts:
+            triggers.append(policy.ReviewReason.UNAVAILABLE_FACT)
+            reply = templates.unavailable_fact("your lease or rent question")
+        else:
+            reply = templates.rent_lease_facts(facts)
+            if any(f.stale or not f.references for f in facts):
+                triggers.append(policy.ReviewReason.UNCERTAIN)
+        decision = policy.decide(bool(facts) and policy.is_routine_fact_question(content), *triggers)
+        draft, review = self._draft_reply(message_id=message_id, request_id=None,
+                                         content=reply, decision=decision,
+                                         fact_refs=self._fact_refs(facts))
+        return CommunicationOutcome(message_id=message_id, category="lease_rent",
+                                    routed_to="lease_rent", fact_result=result, draft=draft,
+                                    review=review, eligibility=decision)
+
+    def _route_smalltalk(self, message_id, content, triggers):
+        decision = policy.decide(policy.is_routine_greeting(content), *triggers)
+        draft, review = self._draft_reply(message_id=message_id, request_id=None,
+                                         content=templates.smalltalk(), decision=decision)
+        return CommunicationOutcome(message_id=message_id, category="smalltalk",
+                                    routed_to="smalltalk", draft=draft, review=review,
+                                    eligibility=decision)
+
+    def _attempt_emergency_alert(self, auth, message_id):
+        """Queue minimal manager alerts; never claim acceptance is delivery."""
+        managers = tuple(row[0] for row in self._conn.execute(
+            "SELECT manager_id FROM manager_property WHERE property_id = ? ORDER BY manager_id",
+            (auth.property_id,)).fetchall())
+        accepted, failures = [], []
+        if not managers:
+            failures.append("no bound manager")
+        elif self._notification is None:
+            failures.append("notification service unavailable")
+        else:
+            for manager in managers:
+                # Recheck the authoritative scope immediately before publishing.
+                if not self._conn.execute(
+                    "SELECT 1 FROM manager_property WHERE manager_id = ? AND property_id = ?",
+                    (manager, auth.property_id)).fetchone():
+                    failures.append("manager binding removed")
+                    continue
+                try:
+                    delivery = self._notification.publish(NotificationEvent(
+                        event_id=EventId(f"alert:{message_id}"), recipient_id=RecipientId(manager),
+                        kind=NotificationKind.MANAGER_ALERT, message_id=message_id,
+                        payload={"property_id": auth.property_id, "message_id": message_id,
+                                 "emergency": True}, created_at=utcnow()))
+                    if delivery.status in (NotificationStatus.ACCEPTED, NotificationStatus.DELIVERED):
+                        accepted.append(manager)
+                    else:
+                        failures.append(delivery.status.value)
+                except Exception:
+                    failures.append("notification publisher error")  # no raw exception leakage
+        self._audit("communication.emergency_alert_attempted", message_id,
+                    {"recipient_count": len(managers), "accepted_count": len(accepted),
+                     "failures": failures})
+        return policy.EmergencyAlert(dispatched=bool(accepted), manager_ids=managers,
+                                     failure="; ".join(failures) or None)
 
     def _handoff(
         self,
@@ -380,10 +380,11 @@ class CommunicationService:
         message_id: MessageId,
         request_id: RequestId | None,
         content: str,
-        reason: str,
+        decision: policy.EligibilityDecision,
         fact_refs: list | None = None,
-    ) -> tuple[Draft, ReviewRequest]:
+    ) -> tuple[Draft, ReviewRequest | None]:
         now = utcnow()
+        reason = decision.reason.value if decision.reason else None
         draft = Draft(
             draft_id=new_id(),
             message_id=message_id,
@@ -391,30 +392,32 @@ class CommunicationService:
             content=content,
             tone_hint=None,
             source_facts=fact_refs or [],
-            status=DraftStatus.PENDING_REVIEW,
+            status=decision.status,
             created_at=now,
         )
         self._conn.execute(
             "INSERT INTO draft (draft_id, message_id, request_id, content, "
             "tone_hint, review_reason, source_facts, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 draft.draft_id, message_id, request_id, content,
                 draft.tone_hint, reason,
                 json.dumps([ref.model_dump(mode="json") for ref in (fact_refs or [])],
-                           ensure_ascii=False),
+                           ensure_ascii=False), draft.status.value,
                 now.isoformat().replace("+00:00", "Z"),
             ),
         )
         self._conn.commit()
         self._audit("draft.created", message_id, {"draft_id": draft.draft_id, "reason": reason})
-        review = ReviewRequest(
-            review_id=new_id(),
-            draft=draft,
-            original_message=self._message_content(message_id),
-            reason=reason,
-            source_facts=fact_refs or [],
-        )
+        review = None
+        if decision.status is DraftStatus.PENDING_REVIEW:
+            review = ReviewRequest(
+                review_id=new_id(),
+                draft=draft,
+                original_message=self._message_content(message_id),
+                reason=reason,
+                source_facts=fact_refs or [],
+            )
         return draft, review
 
     def _message_content(self, message_id: str) -> str | None:

@@ -5,7 +5,7 @@ Covers the binding rules:
 - Invalid classifier output (None) -> human handoff, NOT "unknown".
 - UC1 routing -> IMaintenanceIntake; registered/needs_clarification/failed.
 - UC2 routing -> ILeaseRentQuery; available/not_available/denied/conflict.
-- Drafts are ALWAYS pending_review with message_id origin (exactly one
+- Routine drafts are auto_eligible; review-triggered drafts are pending_review with message_id origin (exactly one
   origin), grounded in returned facts (source_facts) — no auto-send.
 - Delivery status is shown truthfully: ACCEPTED is never shown as sent.
 
@@ -263,7 +263,7 @@ def test_maintenance_registered_drafts_ack(db):
     assert intake.description == "my kitchen sink is leaking badly"
     # Draft is grounded: request id appears in content and a system ref.
     assert outcome.draft is not None
-    assert outcome.draft.status is DraftStatus.PENDING_REVIEW
+    assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
     assert outcome.draft.message_id == outcome.message_id
     assert outcome.draft.request_id == "req-1"
     assert "req-1" in outcome.draft.content
@@ -271,7 +271,7 @@ def test_maintenance_registered_drafts_ack(db):
         r.source_type == "system" and r.source_id == "req-1"
         for r in outcome.draft.source_facts
     )
-    assert outcome.review.original_message == "my kitchen sink is leaking badly"
+    assert outcome.review is None
 
 
 def test_maintenance_needs_clarification_asks_tenant(db):
@@ -366,7 +366,9 @@ def test_lease_rent_not_available_never_claims_rule_missing(db):
     outcome = svc.handle_message(AuthContext(TENANT, PROPERTY), "how much is my rent?")
     assert outcome.routed_to == "lease_rent"
     assert outcome.draft is not None
-    assert "no rent record for this period yet" in outcome.draft.content
+    assert "verified information" in outcome.draft.content
+    assert "no rent record for this period yet" not in outcome.draft.content
+    assert outcome.review is not None
     assert outcome.draft.source_facts == []  # no facts were fabricated
 
 
@@ -393,13 +395,13 @@ def test_smalltalk_ack_draft(db):
     outcome = svc.handle_message(AuthContext(TENANT, PROPERTY), "hi, good morning!")
     assert outcome.routed_to == "smalltalk"
     assert outcome.draft is not None
-    assert outcome.draft.status is DraftStatus.PENDING_REVIEW
+    assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
 
 
 # ---------------------------------------------------------------------------
 # Draft persistence + origin invariant
 # ---------------------------------------------------------------------------
-def test_draft_persisted_pending_review_with_message_origin(db):
+def test_draft_persisted_auto_eligible_with_message_origin(db):
     svc = make_service(db)
     outcome = svc.handle_message(AuthContext(TENANT, PROPERTY), "hello")
     row = db.execute(
@@ -409,7 +411,7 @@ def test_draft_persisted_pending_review_with_message_origin(db):
     ).fetchone()
     assert row["message_id"] == outcome.message_id
     assert row["source_id"] is None  # exactly one origin
-    assert row["status"] == "pending_review"
+    assert row["status"] == "auto_eligible"
     assert row["content"] == outcome.draft.content
 
 
@@ -464,3 +466,118 @@ def test_delivery_label_without_notification_service(db):
 def test_delivery_label_unknown_message(db):
     svc = make_service(db, notification=FakeNotification())
     assert svc.delivery_label_for("no-such-message") is None
+
+
+# Conditional-review regression coverage: eligibility is not delivery.
+@pytest.mark.parametrize("text", ["please waive my rent", "how much is my rent? Also refund me", "rent advice please"])
+def test_nonroutine_facts_require_review(db, text):
+    result = LeaseRentFactResult(message_id="m-x", availability=FactAvailability.AVAILABLE,
+                                facts=[_fact("rent_amount", "2000")])
+    out = make_service(db, lease_rent=FakeLeaseRent(result)).handle_message(AuthContext(TENANT, PROPERTY), text)
+    assert out.draft.status is DraftStatus.PENDING_REVIEW
+    assert out.review.draft.draft_id == out.draft.draft_id
+    assert out.review.original_message == text
+
+
+@pytest.mark.parametrize("condition", ["stale", "no_refs", "empty"])
+def test_unverified_facts_never_autoeligible(db, condition):
+    fact = _fact("rent_amount", "2000")
+    if condition == "stale":
+        fact.stale = True
+    if condition == "no_refs":
+        fact.references = []
+    result = LeaseRentFactResult(message_id="m-x", availability=FactAvailability.AVAILABLE,
+                                facts=[] if condition == "empty" else [fact])
+    out = make_service(db, lease_rent=FakeLeaseRent(result)).handle_message(AuthContext(TENANT, PROPERTY), "how much is my rent?")
+    assert out.draft.status is DraftStatus.PENDING_REVIEW
+    assert out.review is not None
+
+
+def test_autoeligible_is_not_approval_or_dispatch(db):
+    publisher = FakeNotification()
+    out = make_service(db, notification=publisher).handle_message(AuthContext(TENANT, PROPERTY), "hello")
+    assert out.draft.status is DraftStatus.AUTO_ELIGIBLE
+    assert out.review is None
+    assert publisher.published == []
+    assert out.tenant_response() == {"message_id": out.message_id, "reply_status": "auto_eligible", "delivery_status": "not_dispatched"}
+
+
+def bind_manager(db):
+    db.execute("INSERT INTO manager VALUES ('manager-secret', 'M', '2026-01-01T00:00:00Z')")
+    db.execute("INSERT INTO manager_property VALUES ('manager-secret', ?, '2026-01-01T00:00:00Z')", (PROPERTY,))
+    db.commit()
+
+
+def test_emergency_alert_precedes_failed_intake(db):
+    bind_manager(db)
+    events = []
+    class Publisher(FakeNotification):
+        def publish(self, event):
+            assert db.execute("SELECT 1 FROM message WHERE message_id=?", (event.message_id,)).fetchone()
+            events.append("alert")
+            return super().publish(event)
+    class Maintenance(FakeMaintenance):
+        def submit_issue(self, intake):
+            events.append("intake")
+            raise RuntimeError("private credential")
+    publisher = Publisher()
+    out = make_service(db, notification=publisher, maintenance=Maintenance(None, db)).handle_message(
+        AuthContext(TENANT, PROPERTY), "my heater is broken and there is smoke")
+    assert events == ["alert", "intake"]
+    assert out.emergency_alert.dispatched
+    assert out.routed_to == "human"
+    assert "private credential" not in out.model_dump_json()
+    assert set(publisher.published[0].payload) == {"property_id", "message_id", "emergency"}
+    assert "manager-secret" not in str(out.tenant_response())
+
+
+@pytest.mark.parametrize("failure", ["missing_manager", "publisher_error", "invalid_classifier"])
+def test_emergency_failures_and_invalid_classification(db, failure):
+    class BrokenPublisher(FakeNotification):
+        def publish(self, event):
+            raise RuntimeError("secret token")
+    if failure != "missing_manager":
+        bind_manager(db)
+    publisher = BrokenPublisher() if failure == "publisher_error" else FakeNotification()
+    out = make_service(db, notification=publisher, classifier=InvalidClassifier()).handle_message(
+        AuthContext(TENANT, PROPERTY), "gas leak")
+    assert out.routed_to == "human"
+    assert out.emergency_alert is not None
+    assert out.emergency_alert.dispatched == (failure == "invalid_classifier")
+    assert "secret token" not in out.model_dump_json()
+    assert db.execute("SELECT 1 FROM audit WHERE action='communication.emergency_alert_attempted'").fetchone()
+
+
+def test_emergency_registered_requires_review(db):
+    maint = FakeMaintenance(RegisteredIntake(status="registered", request_id="req-urgent",
+                            persisted_status=MaintenanceStatus.SUBMITTED, priority=Priority.EMERGENCY), db)
+    out = make_service(db, maintenance=maint).handle_message(AuthContext(TENANT, PROPERTY), "the heater is broken")
+    assert out.draft.status is DraftStatus.PENDING_REVIEW
+    assert out.review.reason == "emergency"
+    assert not out.emergency_alert.dispatched
+    assert out.emergency_alert.failure == "no bound manager"
+
+
+def test_unbound_scope_never_calls_dependencies(db):
+    class MustNotClassify(BaseClassifier):
+        def classify(self, content):
+            pytest.fail("binding must be checked before classification")
+    with pytest.raises(PermissionError):
+        make_service(db, classifier=MustNotClassify()).handle_message(AuthContext(TENANT, "other-property"), "fire")
+    assert db.execute("SELECT COUNT(*) FROM message").fetchone()[0] == 0
+
+
+def test_clarification_does_not_echo_internal_field_names(db):
+    maint = FakeMaintenance(NeedsClarificationIntake(status="needs_clarification", missing_fields=["manager_private_notes"]), db)
+    out = make_service(db, maintenance=maint).handle_message(AuthContext(TENANT, PROPERTY), "something is broken")
+    assert "manager_private_notes" not in out.draft.content
+    assert "No maintenance request was created" in out.draft.content
+
+
+def test_denied_facts_are_not_returned(db):
+    result = LeaseRentFactResult(message_id="m-x", availability=FactAvailability.AUTHORIZATION_DENIED,
+                                facts=[_fact("private_note", "secret")], note="internal reason")
+    out = make_service(db, lease_rent=FakeLeaseRent(result)).handle_message(AuthContext(TENANT, PROPERTY), "how much is my rent?")
+    assert out.fact_result is None
+    assert out.draft is None
+    assert "secret" not in str(out.tenant_response())

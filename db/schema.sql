@@ -186,7 +186,10 @@ CREATE TABLE IF NOT EXISTS draft (
     review_reason TEXT,
     source_facts  TEXT, -- JSON: [{source_type, source_id, version, snippet}]
     status        TEXT NOT NULL DEFAULT 'pending_review',
-        -- pending_review | approved | rejected | superseded | sent
+        -- auto_eligible | pending_review | approved | rejected | superseded | sent
+        -- (auto_eligible: deterministic policy found no review trigger;
+        --  dispatch still goes through the shared notification path —
+        --  see contracts/drafting.py DraftStatus)
     created_at    TEXT NOT NULL
 );
 
