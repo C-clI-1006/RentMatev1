@@ -5,6 +5,9 @@ Run: pytest backend/tests/
 
 from datetime import datetime, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from contracts.common import EventId, MessageId, PropertyId, TenantId
 from contracts.drafting import Draft, DraftStatus, ReviewDecisionRecord, ReviewDecision
 from contracts.lease_rent import (
@@ -20,6 +23,7 @@ from contracts.maintenance import (
     IntakeResult,
     MaintenanceIntake,
     NeedsClarificationIntake,
+    Priority,
     RegisteredIntake,
 )
 from contracts.notification import (
@@ -36,9 +40,15 @@ def _now() -> datetime:
 
 
 def test_intake_registered_shape():
-    result = RegisteredIntake(request_id="req-1", persisted_status="submitted")
+    result = RegisteredIntake(
+        request_id="req-1",
+        persisted_status="submitted",
+        priority=Priority.ROUTINE,
+    )
     assert result.status == "registered"
     assert result.persisted_status == "submitted"
+    # a235805: priority is assessed at registration (FR-MC-02)
+    assert result.priority == Priority.ROUTINE
     # The three outcomes are mutually exclusive by the `status` discriminator.
     assert RegisteredIntake.model_fields["status"].default == "registered"
     assert NeedsClarificationIntake.model_fields["status"].default == "needs_clarification"
@@ -114,6 +124,51 @@ def test_draft_version_and_approval_binding():
     )
     assert record.draft_version == 2
     assert record.final_content is not None
+
+
+def test_draft_origin_exactly_one():
+    # UC5 reminder draft: no inbound message, origin is the rent alert.
+    # source_id reuses the lease_rent candidate key verbatim.
+    draft = Draft(
+        draft_id="d-9",
+        source_kind="rent_reminder",
+        source_id="rent-overdue:rr-1:2026-10-01",
+        content="Reminder: your rent is due on 2026-10-01.",
+        created_at=_now(),
+    )
+    assert draft.message_id is None
+    assert draft.source_kind == "rent_reminder"
+
+
+def test_draft_origin_mutually_exclusive():
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        Draft(
+            draft_id="d-10",
+            message_id=MessageId("m-5"),
+            source_kind="lease_deadline",
+            source_id="lease-deadline:l-1:2026-12-31",
+            content="x",
+            created_at=_now(),
+        )
+
+
+def test_draft_origin_none_set_rejected():
+    with pytest.raises(ValidationError, match="must be set"):
+        Draft(
+            draft_id="d-11",
+            content="x",
+            created_at=_now(),
+        )
+
+
+def test_draft_source_id_requires_source_kind():
+    with pytest.raises(ValidationError, match="source_kind"):
+        Draft(
+            draft_id="d-12",
+            source_id="rent-overdue:rr-2:2026-11-01",
+            content="x",
+            created_at=_now(),
+        )
 
 
 def test_rejection_has_no_deliverable_content():

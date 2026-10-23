@@ -30,6 +30,9 @@ interaction. Source: Stage 1 guide §18 (interface contracts), §13
   version; rejection ⇒ no tenant message. The pending proposal below
   adds a separate routine-reply eligibility path; it is not yet an approved
   change to this baseline invariant.
+- Draft origin: exactly one of `message_id` / `source_id` is set.
+  System-generated drafts carry `source_id` reusing the lease_rent
+  candidate keys verbatim, so scheduled re-runs stay idempotent.
 - `ACCEPTED` ≠ `DELIVERED`; failures are `failed` / `pending_retry`,
   never silent success.
 - Dedup by stable `event_id` (+ `recipient_id` for notifications);
