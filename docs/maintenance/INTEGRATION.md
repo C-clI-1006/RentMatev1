@@ -39,6 +39,8 @@ Input is contracts.maintenance.MaintenanceIntake:
 
 tenant_id/property_id are populated from verified context. Retrying must reuse
 the source message ID and event ID. Both keys are deduplicated per property.
+This is the trusted internal `IMaintenanceIntake` contract. The public tenant
+HTTP endpoint does not accept either identifier; it generates them server-side.
 
 Three mutually exclusive results:
 

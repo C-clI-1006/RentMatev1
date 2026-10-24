@@ -77,8 +77,9 @@ cp ../.env.example .env   # fill in LLM config when available
 uvicorn main:app --reload
 ```
 
-Database: maintenance creates its own `mc_*` tables on first API use.
-The shared `db/schema.sql` remains a draft and is not automatically applied.
+Database: maintenance creates its own `mc_*` tables on first API use. API
+startup also applies the shared schema/migrations so authenticated tenant and
+manager property bindings can be checked. Maintenance writes only `mc_*`.
 
 ## Ownership
 

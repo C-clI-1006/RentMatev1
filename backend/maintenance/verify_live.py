@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from main import app
 from maintenance.api import get_store
 from maintenance.store import Store
+from shared.sqlite import init_connection
 
 
 def run():
@@ -43,7 +44,32 @@ def run():
     }
     try:
         with tempfile.TemporaryDirectory(prefix="rentmate-live-") as directory:
-            store = Store(Path(directory) / "acceptance.db")
+            database = Path(directory) / "acceptance.db"
+            db = init_connection(database)
+            timestamp = "2026-01-01T00:00:00Z"
+            db.execute(
+                "INSERT INTO tenant (tenant_id,name,created_at) VALUES (?,?,?)",
+                ("acceptance-tenant", "Acceptance Tenant", timestamp),
+            )
+            db.execute(
+                "INSERT INTO property (property_id,name,created_at) VALUES (?,?,?)",
+                ("acceptance-property", "Acceptance Property", timestamp),
+            )
+            db.execute(
+                "INSERT INTO tenant_property (tenant_id,property_id,created_at) VALUES (?,?,?)",
+                ("acceptance-tenant", "acceptance-property", timestamp),
+            )
+            db.execute(
+                "INSERT INTO manager (manager_id,name,created_at) VALUES (?,?,?)",
+                ("acceptance-manager", "Acceptance Manager", timestamp),
+            )
+            db.execute(
+                "INSERT INTO manager_property (manager_id,property_id,created_at) VALUES (?,?,?)",
+                ("acceptance-manager", "acceptance-property", timestamp),
+            )
+            db.commit()
+            db.close()
+            store = Store(database)
             app.dependency_overrides[get_store] = lambda: store
             tenant_headers = {"Authorization": "Bearer " + token}
             manager_headers = {"Authorization": "Bearer " + manager_token}
@@ -74,8 +100,6 @@ def run():
                 for name, title, description in cases:
                     start = time.monotonic()
                     body = {
-                        "message_id": "acceptance-" + name,
-                        "event_id": "event-" + name,
                         "title": title,
                         "description": description,
                     }
@@ -112,13 +136,6 @@ def run():
                         }
                     )
                     records[name] = record
-                    if name == "routine":
-                        replay = client.post(
-                            "/api/maintenance/requests", json=body, headers=tenant_headers
-                        ).json()
-                        report["checks"]["duplicate_same_request"] = (
-                            replay["request_id"] == record["request_id"]
-                        )
                 record = records["routine"]
                 request_id = record["request_id"]
                 for state in ["approved", "in_progress", "awaiting_confirmation", "closed"]:

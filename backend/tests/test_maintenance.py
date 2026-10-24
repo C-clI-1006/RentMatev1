@@ -10,9 +10,12 @@ from contracts.maintenance import MaintenanceStatus as S
 from llm import Assessment
 from maintenance.outbox import RetryableHandoffError, dispatch_pending, reconcile
 from maintenance.rules import emergency_indicators
+from maintenance.seed_demo import seed
 from maintenance.service import MaintenanceService
 from maintenance.store import Store
+from permissions import ManagerAccessDeniedError
 from shared import AuthContext, utcnow
+from shared.sqlite import init_connection
 
 
 @pytest.mark.parametrize(
@@ -39,7 +42,26 @@ class Assessor:
 
 @pytest.fixture
 def setup(tmp_path):
-    store = Store(tmp_path / "test.db")
+    path = tmp_path / "test.db"
+    db = init_connection(path)
+    ts = "2026-01-01T00:00:00Z"
+    db.executescript(
+        f"""
+        INSERT INTO tenant (tenant_id,name,created_at) VALUES
+          ('t1','Tenant 1','{ts}'), ('t2','Tenant 2','{ts}');
+        INSERT INTO property (property_id,name,created_at) VALUES
+          ('p1','Property 1','{ts}'), ('p2','Property 2','{ts}');
+        INSERT INTO tenant_property (tenant_id,property_id,created_at) VALUES
+          ('t1','p1','{ts}'), ('t2','p2','{ts}');
+        INSERT INTO manager (manager_id,name,created_at) VALUES
+          ('m1','Manager 1','{ts}'), ('m2','Manager 2','{ts}');
+        INSERT INTO manager_property (manager_id,property_id,created_at) VALUES
+          ('m1','p1','{ts}'), ('m2','p2','{ts}');
+        """
+    )
+    db.commit()
+    db.close()
+    store = Store(path)
     tenant = MaintenanceService(store, Assessor(), AuthContext("t1", "p1"))
     manager = MaintenanceService(store, Assessor(), AuthContext("t1", "p1", "m1"))
     return store, tenant, manager
@@ -113,6 +135,29 @@ def test_missing_data_and_scope(setup):
     alien = MaintenanceService(store, Assessor(), AuthContext("t1", "p2", "m2"))
     assert alien.get(r.request_id, "p2") is None
     assert t.get(r.request_id, "p2") is None
+
+
+def test_manager_scope_uses_authoritative_property_binding(setup):
+    store, tenant, _manager = setup
+    request = tenant.submit_issue(intake())
+    unbound = MaintenanceService(store, Assessor(), AuthContext("t1", "p1", "m2"))
+    unknown = MaintenanceService(store, Assessor(), AuthContext("t1", "p1", "unknown"))
+
+    for service in (unbound, unknown):
+        with pytest.raises(ManagerAccessDeniedError):
+            service.list_requests()
+        with pytest.raises(ManagerAccessDeniedError):
+            service.get(request.request_id, "p1")
+        result = service.change_status(
+            MaintenanceStatusCommand(
+                request_id=request.request_id,
+                target_status=S.APPROVED,
+                expected_version=2,
+                manager_id=service.auth.manager_id,
+                reason="Must not be applied",
+            )
+        )
+        assert result.code == "forbidden"
 
 
 def test_guards_and_stale_update(setup):
@@ -230,6 +275,9 @@ def test_api_auth_identity_and_manager_flow(setup, monkeypatch):
             {
                 "tenant-secret": {"tenant_id": "t1", "property_id": "p1"},
                 "manager-secret": {"tenant_id": "t1", "property_id": "p1", "manager_id": "m1"},
+                "unbound-manager": {"tenant_id": "t1", "property_id": "p1", "manager_id": "m2"},
+                "unknown-manager": {"tenant_id": "t1", "property_id": "p1", "manager_id": "missing"},
+                "unbound-tenant": {"tenant_id": "t2", "property_id": "p1"},
             }
         ),
     )
@@ -238,14 +286,20 @@ def test_api_auth_identity_and_manager_flow(setup, monkeypatch):
             assert c.get("/api/maintenance/requests").status_code in (401, 403)
             h = {"Authorization": "Bearer tenant-secret"}
             b = {
-                "message_id": "msg1",
-                "event_id": "ev1",
                 "title": "Handle",
                 "description": "Loose handle",
             }
             assert (
                 c.post(
                     "/api/maintenance/requests", json={**b, "property_id": "spoof"}, headers=h
+                ).status_code
+                == 422
+            )
+            assert (
+                c.post(
+                    "/api/maintenance/requests",
+                    json={**b, "message_id": "caller-controlled", "event_id": "caller-controlled"},
+                    headers=h,
                 ).status_code
                 == 422
             )
@@ -262,6 +316,14 @@ def test_api_auth_identity_and_manager_flow(setup, monkeypatch):
                 == 403
             )
             mh = {"Authorization": "Bearer manager-secret"}
+            for token in ("unbound-manager", "unknown-manager", "unbound-tenant"):
+                assert (
+                    c.get(
+                        "/api/maintenance/requests",
+                        headers={"Authorization": "Bearer " + token},
+                    ).status_code
+                    == 403
+                )
             assert (
                 c.post(
                     f"/api/maintenance/requests/{rid}/assessment",
@@ -277,6 +339,23 @@ def test_api_auth_identity_and_manager_flow(setup, monkeypatch):
             assert c.get("/api/maintenance/summaries", headers=mh).json()[0]["request_id"] == rid
     finally:
         app.dependency_overrides.clear()
+
+
+def test_demo_seed_creates_authoritative_identity_bindings(tmp_path):
+    database = tmp_path / "demo.db"
+    seed(database)
+    db = init_connection(database)
+    try:
+        assert db.execute(
+            "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
+            ("demo-tenant", "demo-property"),
+        ).fetchone()
+        assert db.execute(
+            "SELECT 1 FROM manager_property WHERE manager_id=? AND property_id=?",
+            ("demo-manager", "demo-property"),
+        ).fetchone()
+    finally:
+        db.close()
 
 
 def test_commit_rolls_back_when_queue_write_fails(setup):
