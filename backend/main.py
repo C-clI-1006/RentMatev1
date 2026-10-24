@@ -14,8 +14,10 @@ load_dotenv(Path(__file__).with_name(".env"))
 app = FastAPI(title="RentMate API", version="0.1.0")
 
 from maintenance.api import router as maintenance_router
+from review.api import router as review_router
 
 app.include_router(maintenance_router)
+app.include_router(review_router)
 
 
 @app.get("/health")

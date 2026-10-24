@@ -1,7 +1,22 @@
-"""Review component (shared capability).
+"""Manager review workflow.
 
-Manager review workflow: show original message + source facts + draft +
-reason; record decisions immutably (contracts.ReviewDecisionRecord);
-approval binds to a specific draft version; rejection => no tenant
-message.
+Decisions are immutable, bound to an exact draft version and property scoped.
+Rejection never creates a tenant notification. A later notification dispatcher
+may read only the exact approved `final_content` from the decision record.
 """
+
+from .service import (
+    InvalidReviewDecisionError,
+    ReviewConflictError,
+    ReviewNotFoundError,
+    ReviewQueueItem,
+    ReviewService,
+)
+
+__all__ = [
+    "InvalidReviewDecisionError",
+    "ReviewConflictError",
+    "ReviewNotFoundError",
+    "ReviewQueueItem",
+    "ReviewService",
+]
