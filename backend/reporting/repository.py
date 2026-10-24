@@ -19,11 +19,28 @@ from contracts.reporting import (
     RentSectionData,
     ScheduledReportTrigger,
 )
+from shared import new_id
 
 
 class ReportRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+
+    def get(self, report_id: str, property_id: str) -> ReportRecord | None:
+        """Read one report only within the requested property."""
+        row = self.connection.execute(
+            "SELECT * FROM report WHERE report_id=? AND property_id=?",
+            (str(report_id), str(property_id)),
+        ).fetchone()
+        return self._record(row) if row is not None else None
+
+    def list_for_period(self, property_id: str, period: ReportPeriod) -> list[ReportRecord]:
+        rows = self.connection.execute(
+            "SELECT * FROM report WHERE property_id=? AND period_year=? "
+            "AND period_month=? ORDER BY generation",
+            (str(property_id), period.year, period.month),
+        ).fetchall()
+        return [self._record(row) for row in rows]
 
     def property_exists(self, property_id: str) -> bool:
         return (
@@ -118,6 +135,48 @@ class ReportRepository:
         except Exception:
             self.connection.rollback()
             raise
+
+    def record_failure(
+        self,
+        actor: str,
+        property_id: str,
+        period: ReportPeriod,
+        event_id: str,
+        created_at: datetime,
+        code: str = "all_sources_unavailable",
+        unavailable_sources: list[str] | None = None,
+    ) -> None:
+        """Audit-only record for a failed generation. No report row is
+        written, so the event_id stays free and the same slot can be
+        retried once the data recovers.
+
+        ``code`` mirrors the returned error code so the audit trail
+        says WHY the attempt failed (all sources unavailable vs.
+        authorisation denied). The details carry no exception text."""
+        details: dict[str, object] = {
+            "property_id": property_id,
+            "period": period.label,
+            "outcome": "failed",
+            "code": code,
+        }
+        if unavailable_sources is not None:
+            details["unavailable_sources"] = unavailable_sources
+        self.connection.execute(
+            "INSERT INTO audit "
+            "(audit_id,actor,action,subject_type,subject_id,event_id,details,at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                new_id(),
+                actor,
+                "report.failed",
+                "property",
+                property_id,
+                event_id,
+                json.dumps(details, ensure_ascii=False),
+                _iso(created_at),
+            ),
+        )
+        self.connection.commit()
 
     @staticmethod
     def _record(row: sqlite3.Row) -> ReportRecord:

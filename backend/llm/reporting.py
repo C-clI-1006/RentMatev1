@@ -51,11 +51,17 @@ class LlmReportNarrator:
                             {"role": "user", "content": json.dumps(facts, ensure_ascii=False)},
                         ],
                         "max_completion_tokens": 800,
+                        # The course proxy accepts this field; with the thinking
+                        # model enabled it exhausts the token budget on
+                        # reasoning before any content is produced.
+                        "reasoning_effort": "none",
                         "stream": False,
                     },
                 )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                return ReportNarrative(source=NarrativeSource.MISSING)
             parsed = _NarrativeOutput.model_validate(json.loads(content.strip()))
             return ReportNarrative(
                 source=NarrativeSource.LIVE,

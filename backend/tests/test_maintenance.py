@@ -482,8 +482,10 @@ def test_report_marks_month_end_state_unknown_when_event_history_is_missing(
         "p1", ReportPeriod(year=2026, month=10)
     )
 
-    assert section.availability == A.EMPTY
-    assert section.requests == []
+    # Keep the local reporting policy: unknown membership is retained and
+    # identified explicitly rather than silently treated as no records.
+    assert section.availability == A.AVAILABLE
+    assert [row.request_id for row in section.requests] == [result.request_id]
     assert "could not be determined" in section.note
     assert result.request_id in section.note
 

@@ -80,6 +80,9 @@ def _section_from_requests(
     indeterminate: list[str] = []
 
     for request in requests:
+        # Requests created after this month did not exist in its reporting window.
+        if request.created_at >= period.end:
+            continue
         events = sorted(request.events, key=lambda event: event.occurred_at)
         before_end = [event for event in events if event.occurred_at < period.end]
         created_in_period = period.start <= request.created_at < period.end
@@ -91,11 +94,20 @@ def _section_from_requests(
         if request.created_at < period.end:
             if before_end:
                 open_at_period_end = before_end[-1].to_status not in _TERMINAL
-            else:
-                # A current status cannot establish the historical month-end state.
-                indeterminate.append(str(request.request_id))
 
-        if not (created_in_period or changed_in_period or open_at_period_end):
+        # Preserve the local treatment of unknown membership: retain the row and
+        # explicitly identify its missing history instead of silently dropping it.
+        unknown_membership = (
+            not (created_in_period or changed_in_period)
+            and request.created_at < period.end
+            and not before_end
+        )
+        if unknown_membership:
+            indeterminate.append(str(request.request_id))
+        if not (
+            created_in_period or changed_in_period or open_at_period_end
+            or unknown_membership
+        ):
             continue
 
         selected.append(
@@ -107,7 +119,7 @@ def _section_from_requests(
                 created_at=request.created_at,
                 last_activity_at=max(
                     (event.occurred_at for event in events),
-                    default=request.created_at,
+                    default=request.updated_at,
                 ),
                 references=[
                     SourceReference(
@@ -125,7 +137,7 @@ def _section_from_requests(
         note += (
             " Month-end state could not be determined from event history for: "
             + ", ".join(sorted(indeterminate))
-            + "."
+            + ". These records are included with their current values."
         )
     return MaintenanceSectionData(
         availability=(
@@ -133,6 +145,10 @@ def _section_from_requests(
         ),
         requests=selected,
         note=note,
+        # Unconfirmed membership is retained in the row and note, but it
+        # makes the month's range incomplete, so the containing report
+        # must be PARTIAL_SUCCESS, never COMPLETE.
+        period_range_complete=not indeterminate,
     )
 
 
