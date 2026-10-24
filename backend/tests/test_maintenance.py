@@ -1,6 +1,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -305,6 +306,14 @@ def test_api_auth_identity_and_manager_flow(setup, monkeypatch):
             )
             r = c.post("/api/maintenance/requests", json=b, headers=h)
             assert r.status_code == 200
+            keyed = {**h, "Idempotency-Key": "replay-test"}
+            first = c.post("/api/maintenance/requests", json=b, headers=keyed)
+            again = c.post("/api/maintenance/requests", json=b, headers=keyed)
+            assert first.status_code == again.status_code == 200
+            assert first.json() == again.json()
+            conflict = c.post("/api/maintenance/requests", json={**b, "title": "Changed"}, headers=keyed)
+            assert conflict.status_code == 409
+            assert len(c.get("/api/maintenance/requests", headers=h).json()) == 2
             rid = r.json()["request_id"]
             assert c.get("/api/maintenance/outbox", headers=h).status_code == 403
             assert (
@@ -393,3 +402,126 @@ def test_restart_during_assessment_allows_manual_recovery(setup):
         release.set()
         future.result()
     assert m.get(v.request_id, "p1").priority == Priority.URGENT
+
+
+def test_report_provider_scope_unknown_and_storage_failure(setup):
+    from contracts.reporting import ReportPeriod
+    from contracts.reporting import SectionAvailability as A
+    from maintenance.reporting import MaintenanceReportSource
+    store, tenant, manager = setup
+    source = MaintenanceReportSource(manager)
+    period = ReportPeriod(year=utcnow().year, month=utcnow().month)
+    assert source.list_for_period("p1", period).availability == A.EMPTY
+    with pytest.raises(PermissionError):
+        source.list_for_period("p2", period)
+    with pytest.raises(PermissionError):
+        MaintenanceReportSource(tenant).list_for_period("p1", period)
+    result = tenant.submit_issue(intake())
+    with store.transaction() as db:
+        row = db.execute("SELECT document FROM mc_request WHERE id=?", (result.request_id,)).fetchone()
+        document = json.loads(row[0])
+        document["priority"] = None
+        db.execute("UPDATE mc_request SET document=? WHERE id=?", (json.dumps(document), result.request_id))
+    section = source.list_for_period("p1", period)
+    assert section.availability == A.AVAILABLE
+    assert section.requests[0].priority is None
+    assert section.requests[0].references[0].source_id == result.request_id
+    with store.transaction() as db:
+        db.execute("UPDATE mc_request SET document='invalid'")
+    assert source.list_for_period("p1", period).availability == A.NOT_AVAILABLE
+
+
+def test_report_period_history_and_exclusive_boundary(setup, monkeypatch):
+    from datetime import datetime
+
+    from contracts.reporting import ReportPeriod
+    from contracts.reporting import SectionAvailability as A
+    from maintenance.reporting import MaintenanceReportSource
+    _store, tenant, manager = setup
+    clock = [datetime(2026, 9, 1, tzinfo=UTC)]
+    monkeypatch.setattr("maintenance.service.utcnow", lambda: clock[0])
+    old = tenant.submit_issue(intake())
+    clock[0] = datetime(2026, 11, 1, tzinfo=UTC)
+    assert command(manager, old.request_id, S.CANCELLED, 2).status == "applied"
+    future = tenant.submit_issue(intake(message_id="future", event_id="future"))
+    source = MaintenanceReportSource(manager)
+    october = source.list_for_period("p1", ReportPeriod(year=2026, month=10))
+    assert [r.request_id for r in october.requests] == [old.request_id]
+    assert october.requests[0].status == S.CANCELLED  # current value, not historical snapshot
+    november = source.list_for_period("p1", ReportPeriod(year=2026, month=11))
+    assert {r.request_id for r in november.requests} == {old.request_id, future.request_id}
+    assert source.list_for_period("p1", ReportPeriod(year=2026, month=8)).availability == A.EMPTY
+
+
+def test_report_marks_month_end_state_unknown_when_event_history_is_missing(
+    setup, monkeypatch
+):
+    from datetime import datetime
+
+    from contracts.reporting import ReportPeriod
+    from contracts.reporting import SectionAvailability as A
+    from maintenance.reporting import MaintenanceReportSource
+
+    store, tenant, manager = setup
+    monkeypatch.setattr(
+        "maintenance.service.utcnow", lambda: datetime(2026, 9, 1, tzinfo=UTC)
+    )
+    result = tenant.submit_issue(intake())
+    with store.transaction() as db:
+        row = db.execute(
+            "SELECT document FROM mc_request WHERE id=?", (result.request_id,)
+        ).fetchone()
+        document = json.loads(row[0])
+        document["events"] = []
+        db.execute(
+            "UPDATE mc_request SET document=? WHERE id=?",
+            (json.dumps(document), result.request_id),
+        )
+
+    section = MaintenanceReportSource(manager).list_for_period(
+        "p1", ReportPeriod(year=2026, month=10)
+    )
+
+    assert section.availability == A.EMPTY
+    assert section.requests == []
+    assert "could not be determined" in section.note
+    assert result.request_id in section.note
+
+
+def test_strict_replay_concurrent_and_payload_conflict(setup):
+    store, tenant, _manager = setup
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: tenant.submit_issue(intake(), strict_replay=True), range(4)))
+    assert len({r.request_id for r in results}) == 1
+    assert tenant.submit_issue(intake(evidence_refs=["changed"]), strict_replay=True).code == "idempotency_conflict"
+    with store.transaction() as db:
+        assert db.execute("SELECT COUNT(*) FROM mc_request").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM mc_history").fetchone()[0] == 2
+
+
+def test_collector_with_real_maintenance_provider(setup):
+    from contracts.reporting import (
+        LeaseRentPeriodData,
+        LeaseSectionData,
+        RentSectionData,
+        ReportPeriod,
+    )
+    from contracts.reporting import (
+        SectionAvailability as A,
+    )
+    from maintenance.reporting import MaintenanceReportSource
+    from reporting.collector import ReportDataCollector
+    store, tenant, manager = setup
+    result = tenant.submit_issue(intake())
+    class EmptyLeaseSource:
+        # Explicit test double: this test integrates only the real Maintenance source.
+        def period_summary(self, property_id, period):
+            return LeaseRentPeriodData(rent=RentSectionData(availability=A.EMPTY),
+                                       lease=LeaseSectionData(availability=A.EMPTY))
+    collector = ReportDataCollector(MaintenanceReportSource(manager), EmptyLeaseSource())
+    period = ReportPeriod(year=utcnow().year, month=utcnow().month)
+    assert collector.collect("p1", period).maintenance.requests[0].request_id == result.request_id
+    with store.transaction() as db:
+        db.execute("DELETE FROM manager_property WHERE manager_id='m1'")
+    with pytest.raises(PermissionError):
+        collector.collect("p1", period)

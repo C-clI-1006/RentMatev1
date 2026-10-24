@@ -1,3 +1,4 @@
+import hashlib
 import hmac
 import json
 import os
@@ -5,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -127,8 +128,14 @@ def command_result(result):
 
 
 @router.post("/requests")
-def intake(body: IntakeBody, service: Annotated[MaintenanceService, Depends(get_service)]):
+def intake(
+    body: IntakeBody, service: Annotated[MaintenanceService, Depends(get_service)],
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=128)] = None,
+):
     message_id = new_id()
+    if idempotency_key is not None:
+        scope = json.dumps([service.auth.property_id, service.auth.tenant_id, idempotency_key])
+        message_id = "http:" + hashlib.sha256(scope.encode()).hexdigest()
     result = service.submit_issue(
         MaintenanceIntake(
             **body.model_dump(),
@@ -137,10 +144,12 @@ def intake(body: IntakeBody, service: Annotated[MaintenanceService, Depends(get_
             tenant_id=service.auth.tenant_id,
             property_id=service.auth.property_id,
             submitted_at=utcnow(),
-        )
+        ),
+        strict_replay=idempotency_key is not None,
     )
     if result.status == "failed":
-        raise HTTPException(403 if result.code == "forbidden" else 503, result.model_dump())
+        code = {"forbidden": 403, "idempotency_conflict": 409}.get(result.code, 503)
+        raise HTTPException(code, result.model_dump())
     return result
 
 

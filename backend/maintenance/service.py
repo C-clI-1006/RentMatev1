@@ -109,7 +109,7 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
         )
         return event
 
-    def submit_issue(self, intake: MaintenanceIntake):
+    def submit_issue(self, intake: MaintenanceIntake, *, strict_replay=False):
         if intake.property_id != self.auth.property_id or intake.tenant_id != self.auth.tenant_id:
             return FailedIntake(code="forbidden", retryable=False)
         missing = [k for k in ("title", "description") if not getattr(intake, k).strip()]
@@ -124,6 +124,14 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
             if row:
                 if row["tenant_id"] != intake.tenant_id:
                     return FailedIntake(code="forbidden", retryable=False)
+                if strict_replay:
+                    original = MaintenanceView.model_validate_json(row["document"])
+                    if (
+                        (original.title, original.description, original.location)
+                        != (intake.title, intake.description, intake.location)
+                        or original.events[0].evidence_refs != intake.evidence_refs
+                    ):
+                        return FailedIntake(code="idempotency_conflict", retryable=False)
                 return RegisteredIntake.model_validate_json(row["original_result"])
             emergency = intake.emergency_flag or bool(
                 emergency_indicators(intake.title + ". " + intake.description)
