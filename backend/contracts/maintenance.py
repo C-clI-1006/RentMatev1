@@ -90,13 +90,15 @@ class MaintenanceIntake(BaseModel):
     location: str | None = None  # e.g. "2F kitchen"
     event_id: EventId  # stable dedup key
     submitted_at: datetime  # UTC
+    emergency_flag: bool = False
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class RegisteredIntake(BaseModel):
     status: Literal["registered"] = "registered"
     request_id: RequestId
     persisted_status: MaintenanceStatus
-    priority: Priority  # assessed at registration (FR-MC-02)
+    priority: Priority | None = None  # unknown while awaiting manual assessment
 
 
 class NeedsClarificationIntake(BaseModel):
@@ -209,7 +211,7 @@ class MaintenanceEvent(BaseModel):
     actor: str  # "tenant:<id>" | "manager:<id>" | "system:<component>"
     from_status: MaintenanceStatus | None  # None on initial registration
     to_status: MaintenanceStatus
-    priority: Priority
+    priority: Priority | None = None
     reason: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
 
@@ -224,7 +226,7 @@ class MaintenanceView(BaseModel):
     title: str
     description: str
     location: str | None = None
-    priority: Priority
+    priority: Priority | None = None
     status: MaintenanceStatus
     version: int
     emergency_flag: bool = False

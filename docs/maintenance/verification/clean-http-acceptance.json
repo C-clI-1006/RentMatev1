@@ -1,0 +1,18 @@
+{
+  "demo_http": 200,
+  "health_http": 200,
+  "live_intake": {
+    "status": "registered",
+    "request_id": "c9d0a10c-0ace-4390-8c1e-f1579630bf47",
+    "persisted_status": "assessed",
+    "priority": "routine"
+  },
+  "assessment": {
+    "rationale": "A loose cupboard handle that still functions and presents no injury or immediate hazard is a minor maintenance issue.",
+    "confidence": 0.9,
+    "source": "llm",
+    "source_message_id": "70cf2058-7208-4480-bfb0-850b1d6d93a2",
+    "evidence_refs": []
+  },
+  "isolated_clean_deployment": true
+}

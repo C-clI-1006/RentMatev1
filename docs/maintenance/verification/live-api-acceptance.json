@@ -1,0 +1,68 @@
+{
+  "checked_at_utc": "2026-10-24T00:30:27.108816+00:00",
+  "model": "campus-qwen",
+  "cases": [
+    {
+      "case": "routine",
+      "passed": true,
+      "elapsed_seconds": 2.66,
+      "status": "assessed",
+      "priority": "routine",
+      "assessment": {
+        "rationale": "The cupboard is still functional and there is no immediate safety hazard, so this can be scheduled as a routine repair.",
+        "confidence": 0.9,
+        "source": "llm",
+        "source_message_id": "acceptance-routine",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "urgent",
+      "passed": true,
+      "elapsed_seconds": 3.33,
+      "status": "assessed",
+      "priority": "urgent",
+      "assessment": {
+        "rationale": "No hot water from any tap affects basic habitability, but there are no reported gas leaks, fire, smoke, or injury, so it is not an immediate emergency.",
+        "confidence": 0.85,
+        "source": "llm",
+        "source_message_id": "acceptance-urgent",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "emergency",
+      "passed": true,
+      "elapsed_seconds": 2.84,
+      "status": "assessed",
+      "priority": "emergency",
+      "assessment": {
+        "rationale": "A strong gas smell and hissing from a gas pipe indicate a likely gas leak, which poses immediate risk of fire or explosion.",
+        "confidence": 0.98,
+        "source": "llm",
+        "source_message_id": "acceptance-emergency",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "uncertain",
+      "passed": true,
+      "elapsed_seconds": 2.39,
+      "status": "under_review",
+      "priority": null,
+      "assessment": {
+        "review_reason": "Model requested more issue details; manual review required."
+      }
+    }
+  ],
+  "checks": {
+    "duplicate_same_request": true,
+    "approved_lifecycle_closed": true,
+    "history_persisted": true,
+    "reporting_summary": true,
+    "emergency_alert_queued": true,
+    "delivery_truthfully_pending": true
+  },
+  "boundary": "Synthetic API requests; real model; no real tenant/evidence consumer delivery.",
+  "passed": true
+}
