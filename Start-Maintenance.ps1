@@ -41,16 +41,23 @@ if ($Verify) {
 }
 $tenantToken = [guid]::NewGuid().ToString('N')
 $managerToken = [guid]::NewGuid().ToString('N')
+$manager2Token = [guid]::NewGuid().ToString('N')
+$forbiddenToken = [guid]::NewGuid().ToString('N')
 $env:RENTMATE_AUTH_TOKENS = @{
     $tenantToken = @{tenant_id='demo-tenant'; property_id='demo-property'}
     $managerToken = @{tenant_id='demo-tenant'; property_id='demo-property'; manager_id='demo-manager'}
+    $manager2Token = @{tenant_id='demo-tenant-2'; property_id='demo-property-2'; manager_id='demo-manager-2'}
+    # Negative demo: demo-manager has no binding to demo-property-2, so this token must get 403.
+    $forbiddenToken = @{tenant_id='demo-tenant-2'; property_id='demo-property-2'; manager_id='demo-manager'}
 } | ConvertTo-Json -Compress
 Set-Location $backend
 & $python -m maintenance.seed_demo --database $env:DATABASE_PATH
 if ($LASTEXITCODE -ne 0) { throw 'Demo identity binding setup failed' }
 Write-Host 'RentMate Maintenance - demo accounts, local prototype only'
 Write-Host "Tenant token:  $tenantToken"
-Write-Host "Manager token: $managerToken"
+Write-Host "Manager 1 token: $managerToken"
+Write-Host "Manager 2 token: $manager2Token"
+Write-Host "Forbidden-scope test token (expected 403): $forbiddenToken"
 Write-Host 'Open http://127.0.0.1:8020/api/maintenance/demo'
 Write-Host 'API docs: http://127.0.0.1:8020/docs ; Ctrl+C stops server.'
 & $python -m uvicorn main:app --host 127.0.0.1 --port 8020

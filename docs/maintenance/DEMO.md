@@ -5,8 +5,10 @@
 1. Start USYD VPN and verify the course proxy is reachable.
 2. Double-click root Start-Maintenance.cmd. Keep the terminal open.
 3. Open http://127.0.0.1:8020/api/maintenance/demo.
-4. Copy tenant and manager tokens from that terminal. They are random local
-   demo sessions, not the model API key. Do not display the real model key.
+4. Copy the tenant, Manager 1 and Manager 2 tokens from that terminal. They are
+   random local demo sessions, not the model API key. The launcher also prints
+   a deliberately unbound token for the expected-403 demonstration. Do not
+   display the real model key.
 5. Use synthetic issue descriptions and evidence references only. References
    are illustrative unless actual evidence verification is integrated.
 
@@ -18,8 +20,10 @@ Submit. Expect registered -> assessed, normally routine. Inspect history for
 source=llm, rationale, source message and timestamp. Model choices can vary;
 if it requests review, explain and follow the manual-review path.
 
-Click Replay same submission. The same request ID must appear, with no second
-logical request. Switch to manager token -> Load requests. Select the issue.
+Switch to the Manager 1 token -> Load requests. Select the issue. Each public
+HTTP submission receives fresh server-generated message/event IDs and creates a
+new request; the internal maintenance contract is idempotent only when its
+trusted caller retries with the same source IDs.
 
 Keep a meaningful decision reason. Choose approved -> Record status change;
 then in_progress. Attempt awaiting_confirmation with empty evidence: expect
@@ -27,14 +31,16 @@ rejection. Enter synthetic evidence reference demo-completion-001 ->
 awaiting_confirmation -> closed. Each successful command adds one version/history
 entry. Closure is a manager confirmation, not a model decision.
 
-View reporting summaries and handoff queue. Explain pending events honestly:
+View maintenance summaries and the handoff queue. These are maintenance-owned
+HTTP views, not the UC7 Reporting router. Explain pending events honestly:
 until consumers are integrated, no claim is made that a tenant was notified.
 
 English speaking notes:
 
 "My module owns the maintenance request lifecycle. The model recommends a
 priority and provides a rationale, while deterministic rules and manager decisions
-control state changes. Duplicate source messages return the same request. Manager
+control state changes. Trusted internal retries reuse source IDs and return the
+same request; a new public HTTP POST is a new submission. Manager
 commands check the version, so a stale update cannot overwrite newer work. State,
 history and handoff records are committed together. Closing requires a manager
 action and completion evidence references. Notification acceptance is separate
@@ -77,6 +83,41 @@ A: No, they are configurable operational categories from our Stage 1 design.
 Q: What is still group integration work?
 A: Real evidence verification, Communication/Evidence consumers, shared login,
 Reporting consumption and the group frontend. Distinguish each from local tests.
+
+## D. Seeded manager-review and scope demonstration
+
+The launcher seeds two independent properties and review drafts:
+
+| Account | Property | Seeded draft |
+|---|---|---|
+| `demo-manager` | `demo-property` | `demo-review-draft` |
+| `demo-manager-2` | `demo-property-2` | `demo-review-draft-2` |
+
+Use the random tokens printed by the launcher (PowerShell examples):
+
+```powershell
+$headers = @{ Authorization = "Bearer $manager1Token" }
+Invoke-RestMethod http://127.0.0.1:8020/api/reviews -Headers $headers
+
+$body = @{
+  expected_version = 1
+  decision = 'approved'
+  final_content = 'The manager approved this exact response.'
+} | ConvertTo-Json
+Invoke-RestMethod http://127.0.0.1:8020/api/reviews/demo-review-draft/decision `
+  -Method Post -ContentType 'application/json' -Headers $headers -Body $body
+```
+
+Manager 1 lists only `demo-review-draft`; Manager 2 lists only
+`demo-review-draft-2`. A direct lookup of the other property's draft returns
+404 so its existence is not disclosed. To demonstrate default-deny binding,
+call `GET /api/reviews` with the printed forbidden-scope test token; it maps
+`demo-manager` to `demo-property-2`, where no binding exists, and returns 403.
+
+`accepted`, `pending` or `handed_off` records describe queue/handoff state only;
+they do not prove delivery. Communication, Notification, Lease/Rent and UC7
+Reporting currently have backend/test seams but no mounted HTTP routers. The
+only Lease/Rent HTTP surface is the explicit 503 ops stub.
 
 ## Deployment rehearsal
 

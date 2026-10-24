@@ -6,7 +6,7 @@ and record dates/status honestly. Do not backdate agile activity.
 
 | Suggested task | Local status | Acceptance criteria |
 |---|---|---|
-| MC-Register and persist requests | Implemented / locally verified | Source/event replay -> one request; SQLite retains it after restart |
+| MC-Register and persist requests | Implemented / locally verified | Trusted internal retry with the same source IDs -> one request; each public HTTP POST creates fresh IDs |
 | MC-Priority adapter and manual review | Implemented / live verified | Real Qwen structured assessment; missing/invalid output -> review |
 | MC-Manager lifecycle and version checks | Implemented / locally verified | Approval required, stale commands rejected, evidence required to close |
 | MC-Atomic history and handoff queue | Implemented / locally verified | Event write failure rolls back state; stable replay keys |
