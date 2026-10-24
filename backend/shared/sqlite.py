@@ -32,7 +32,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Migration step for v2: manager + manager_property tables (owned:
 # permissions). The DDL mirrors db/schema.sql so the step is self-contained
@@ -55,6 +55,29 @@ CREATE INDEX IF NOT EXISTS idx_manager_property_property
     ON manager_property (property_id);
 """
 
+_REPORT_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS report (
+    report_id      TEXT PRIMARY KEY,
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    period_year    INTEGER NOT NULL,
+    period_month   INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+    generation     INTEGER NOT NULL CHECK (generation >= 1),
+    trigger_kind   TEXT NOT NULL CHECK (trigger_kind IN ('scheduled','manager')),
+    event_id       TEXT NOT NULL UNIQUE,
+    manager_id     TEXT,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('complete','partial_success','failed')),
+    data_json      TEXT NOT NULL,
+    narrative_json TEXT NOT NULL,
+    data_as_of     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    created_by     TEXT NOT NULL,
+    UNIQUE (property_id, period_year, period_month, generation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_property_period
+    ON report (property_id, period_year, period_month);
+"""
+
 
 def _ensure_manager_tables(conn: Connection) -> None:
     """Idempotent v2 step: make sure the manager tables exist.
@@ -65,9 +88,15 @@ def _ensure_manager_tables(conn: Connection) -> None:
     conn.executescript(_MANAGER_TABLE_DDL)
 
 
+def _ensure_report_tables(conn: Connection) -> None:
+    """Idempotent v3 step: add reporting-owned snapshot persistence."""
+    conn.executescript(_REPORT_TABLE_DDL)
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
+    3: _ensure_report_tables,
 }
 
 

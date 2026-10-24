@@ -1,9 +1,8 @@
-"""Property Reporting contract (Stage 1 UC7 monthly report) — DRAFT.
+"""Property Reporting contract (Stage 1 UC7 monthly report).
 
-Status: DRAFT for team sign-off. Nothing here is mandated yet; every
-open decision is marked `[OPEN ...]` or `[PROPOSED ...]` below. This
-file is the only file the reporting owner (Sharon) proposes to change
-in P0; `db/schema.sql` and other modules are NOT touched by it.
+The source interfaces, outcome policy, idempotency rules and persistence
+shape below are implemented by the reporting integration. Historical open
+questions remain labelled where they still describe future refinements.
 
 Aligned to Stage 1 report:
 - §5.3.7 UC7 (System Generates Monthly Property Activity Report):
@@ -21,10 +20,8 @@ Aligned to Stage 1 report:
 Actors:
 - Manager only. UC7 has no tenant / draft / review pipeline; reports
   are generated on schedule or on manager request.
-- The triggering manager must be authorised for the property.
-  [OPEN Q6 — group] The only candidate binding today is
-  `tenant_property.role = 'manager'` (db/schema.sql); confirm the
-  source of the authorisation check.
+- The triggering manager must be authorised through the authoritative
+  `manager_property` binding. Scheduler calls use a separate trusted identity.
 
 Confirmed baseline (Stage 1, no open question):
 - Five fixed sections: maintenance, rent, lease status, outstanding
@@ -62,7 +59,7 @@ Multi-generation semantics (agreed direction; details marked below):
       returns `event_id_conflict` (ReportGenerationError.code).
   (3) NEVER silently return an old report on mismatch.
 
-Data as-of — [PROPOSED, pending confirmation — see Q11]:
+Data as-of — implemented prototype policy:
 - The current prototype INTENDS to use the freshest data available at
   generation time (当前原型拟使用生成时取得的最新数据). This is a
   PROPOSAL for the current prototype, NOT a Stage 1 mandate.
@@ -80,17 +77,13 @@ Data as-of — [PROPOSED, pending confirmation — see Q11]:
   today and remain UN-SUPPORTED / PENDING CONFIRMATION. Do not
   implement or promise them on the basis of this contract.
 
-Data-mandatory policy — [PROPOSED, pending group confirmation]:
+Data-mandatory policy — implemented prototype policy:
 - Each of maintenance / rent / lease is SECTION-mandatory: if one is
   NOT_AVAILABLE, the report is still generated with that section
   marked unavailable and the outcome is `partial_success` (UC7 A1
   semantics).
-- "If ALL THREE of maintenance, rent and lease are NOT_AVAILABLE,
-  stop generation and inform the manager" is a PROPOSAL. It is NOT
-  yet an A2 mapping: UC7 A2 only says that generation stops and the
-  manager is informed when required information cannot be accessed;
-  which information counts as REQUIRED is exactly what is being
-  decided here. Do not cite UC7 A2 as if this were settled.
+- If ALL THREE of maintenance, rent and lease are NOT_AVAILABLE,
+  generation stops and records an audited failed outcome.
 
 Maintenance in-scope window — [PROPOSED, Kerwin Q2]:
 - A request is in scope for the period if ANY of:
@@ -101,9 +94,8 @@ Maintenance in-scope window — [PROPOSED, Kerwin Q2]:
   created-in-period filter would miss it. The terminal-status set and
   the in-period status-change source (MaintenanceEvent.occurred_at vs
   maintenance_request.updated_at) must come from the provider.
-- The LLM-failure behaviour (option A: keep structured data, narrative
-  marked MISSING, outcome stays at least partial_success) is
-  RECOMMENDED but not yet mandated; see ReportNarrative.
+- LLM failure keeps structured data, marks the narrative MISSING and
+  produces at least a partial-success outcome.
 - Enum drift: this contract uses the contract enums from
   contracts/maintenance.py. db/schema.sql (DRAFT v0.1) currently has
   different priority/status values; the provider must serve contract
@@ -302,7 +294,8 @@ class MaintenanceRequestRef(BaseModel):
     request_id: RequestId
     title: str
     status: MaintenanceStatus
-    priority: Priority
+    # Under-review requests legitimately have no assessed priority yet.
+    priority: Priority | None = None
     created_at: datetime
     last_activity_at: datetime  # latest MaintenanceEvent.occurred_at
     references: list[SourceReference] = Field(default_factory=list)
@@ -762,8 +755,8 @@ class IReportService(ABC):
       resolved by the layer above the service from the SERVER-SIDE
       auth context. Identity fields carried in the request payload
       (e.g. trigger.manager_id) are NEVER trusted on their own.
-    - Source of the property-access binding: [OPEN Q6 — group].
-      Candidate today: tenant_property.role = 'manager'.
+    - Manager access is verified through `manager_property` using the
+      shared permissions service.
     - Scheduled triggers use a DEDICATED TRUSTED INTERNAL invocation
       path (see ScheduledReportTrigger): the absence of a manager_id
       must not block them, and ordinary requests cannot impersonate
@@ -789,8 +782,7 @@ class IReportService(ABC):
            trusted internal path only). On failure return
            `authorization_denied` IMMEDIATELY — do not compare
            event_id yet, and do not reveal whether a matching report
-           exists. [OPEN Q6 — group: source of the property-access
-           check]
+           exists, using the authoritative manager-property binding.
         2. Duplicate check AFTER authorisation: if
            `trigger.event_id` already exists in the `report` table,
            compare the stored report's property and period against the
@@ -830,8 +822,8 @@ class IReportService(ABC):
 
 
 # ---------------------------------------------------------------------------
-# PROPOSED DDL — comment only. NOT applied to db/schema.sql in P0; the
-# schema change ships as a reviewable proposal after contract sign-off.
+# Implemented DDL reference. The executable form lives in db/schema.sql and
+# the shared SQLite v3 migration.
 # ---------------------------------------------------------------------------
 #
 # CREATE TABLE IF NOT EXISTS report (
@@ -876,19 +868,16 @@ class IReportService(ABC):
 #                 values differ from the contract enums; provider must
 #                 serve contract values; schema aligned by maintenance
 #                 owner.
-# Q5 [group]      Two-level mandatory policy: per-section mandatory
-#                 (A1 semantics) + "all three missing -> stop" as a
-#                 PROPOSAL (not yet an A2 mapping).
-# Q6 [group]      Manager authorisation source: tenant_property.role =
-#                 'manager' is the only candidate today.
+# Q5 [resolved]   One/two missing -> partial; all three missing -> failed.
+# Q6 [resolved]   Manager authorisation uses manager_property.
 # Q7 [group]      Outstanding-task derivation rule (three sources).
 # Q8 [group]      Risk rule list + thresholds (RiskRule is a starting
 #                 proposal only).
 # Q9 [Ziheng]     Lease status: derived from dates vs a real field;
 #                 amount out of scope for Stage 1.
-# Q10 [Chaney]    LLM-failure option A recommended (pre-P2); scheduler
-#                 stable event_id (pre-P3).
-# Q11 [group]     data_as_of semantics: prototype proposal to record the
+# Q10 [resolved]  LLM failure preserves structured data; scheduler uses a
+#                 stable event_id per property/month.
+# Q11 [resolved]  data_as_of records the
 #                 UTC moment the generation read its sources (freshest
 #                 data at generation time; NOT a same-instant complete
 #                 snapshot across sources; NOT a Stage 1 mandate).
