@@ -19,7 +19,15 @@ from contracts.maintenance import (
 from llm.live import LlmPriorityAssessor
 from maintenance.service import MaintenanceService
 from maintenance.store import Store
-from shared import AuthContext, utcnow
+from permissions import (
+    ManagerAccessDeniedError,
+    MissingManagerIdentityError,
+    SQLiteManagerRepository,
+    manager_id_from_auth,
+    require_manager_property_access,
+)
+from shared import AuthContext, new_id, utcnow
+from shared.sqlite import init_connection
 
 router = APIRouter(prefix="/api/maintenance", tags=["Maintenance (Kerwin)"])
 bearer = HTTPBearer()
@@ -27,10 +35,18 @@ bearer = HTTPBearer()
 
 @lru_cache
 def get_store():
-    return Store(os.getenv("DATABASE_PATH", "./rentmate.db"))
+    path = os.getenv("DATABASE_PATH", "./rentmate.db")
+    # The API uses the shared identity/binding tables as its trust boundary.
+    # Maintenance still writes only its own mc_* tables.
+    bootstrap = init_connection(path)
+    bootstrap.close()
+    return Store(path)
 
 
-def get_auth(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)]):
+def get_auth(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)],
+    store: Annotated[Store, Depends(get_store)],
+):
     # Prototype bridge; replace with the group's verified session resolver.
     try:
         accounts = json.loads(os.getenv("RENTMATE_AUTH_TOKENS", "{}"))
@@ -40,11 +56,26 @@ def get_auth(credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer
         )
         if not account:
             raise ValueError()
-        return AuthContext(
+        auth = AuthContext(
             tenant_id=account["tenant_id"],
             property_id=account["property_id"],
             manager_id=account.get("manager_id"),
         )
+        with store.transaction() as db:
+            if auth.manager_id:
+                require_manager_property_access(
+                    manager_id_from_auth(auth),
+                    auth.property_id,
+                    SQLiteManagerRepository(db),
+                )
+            elif db.execute(
+                "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
+                (auth.tenant_id, auth.property_id),
+            ).fetchone() is None:
+                raise PermissionError("tenant/property binding not verified")
+        return auth
+    except (ManagerAccessDeniedError, MissingManagerIdentityError, PermissionError):
+        raise HTTPException(403, "Session is not authorised for this property")
     except (ValueError, TypeError, KeyError, AttributeError):
         raise HTTPException(401, "Invalid or unconfigured prototype session")
 
@@ -60,8 +91,6 @@ class Input(BaseModel):
 
 
 class IntakeBody(Input):
-    message_id: str = Field(min_length=1)
-    event_id: str = Field(min_length=1)
     title: str
     description: str
     location: str | None = None
@@ -82,7 +111,9 @@ class ManualBody(Input):
 
 
 def manager(service):
-    if not service.auth.manager_id:
+    try:
+        service.require_manager_access()
+    except (ManagerAccessDeniedError, MissingManagerIdentityError, PermissionError):
         raise HTTPException(403, "Manager session required")
 
 
@@ -97,9 +128,12 @@ def command_result(result):
 
 @router.post("/requests")
 def intake(body: IntakeBody, service: Annotated[MaintenanceService, Depends(get_service)]):
+    message_id = new_id()
     result = service.submit_issue(
         MaintenanceIntake(
             **body.model_dump(),
+            message_id=message_id,
+            event_id="intake:" + message_id,
             tenant_id=service.auth.tenant_id,
             property_id=service.auth.property_id,
             submitted_at=utcnow(),

@@ -21,6 +21,11 @@ from contracts.maintenance import (
 )
 from llm import Assessment, AssessmentFailure
 from maintenance.rules import emergency_indicators
+from permissions import (
+    SQLiteManagerRepository,
+    manager_id_from_auth,
+    require_manager_property_access,
+)
 from shared import new_id, utcnow
 
 TRANSITIONS = {
@@ -38,6 +43,20 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
 
     def __init__(self, store, assessor, auth):
         self.store, self.assessor, self.auth = store, assessor, auth
+
+    def require_manager_access(self):
+        """Verify the server-resolved manager against the authoritative binding.
+
+        The property carried by an auth/session token is a requested scope, not
+        proof of access. Missing managers and missing bindings are default-deny.
+        """
+        manager_id = manager_id_from_auth(self.auth)
+        with self.store.transaction() as db:
+            return require_manager_property_access(
+                manager_id,
+                self.auth.property_id,
+                SQLiteManagerRepository(db),
+            )
 
     def _load(self, db, request_id):
         row = db.execute(
@@ -216,10 +235,14 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
     def get(self, request_id, property_id):
         if property_id != self.auth.property_id:
             return None
+        if self.auth.manager_id:
+            self.require_manager_access()
         with self.store.transaction() as db:
             return self._load(db, request_id)
 
     def list_requests(self):
+        if self.auth.manager_id:
+            self.require_manager_access()
         with self.store.transaction() as db:
             ids = [
                 r[0]
@@ -231,6 +254,10 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
 
     def change_status(self, command):
         if not self.auth.manager_id or command.manager_id != self.auth.manager_id:
+            return StatusResultError(code=F.FORBIDDEN)
+        try:
+            self.require_manager_access()
+        except PermissionError:
             return StatusResultError(code=F.FORBIDDEN)
         with self.store.transaction() as db:
             v = self._load(db, command.request_id)
@@ -261,6 +288,10 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
     def manual_assessment(self, request_id, expected_version, priority, rationale):
         if not self.auth.manager_id:
             return StatusResultError(code=F.FORBIDDEN)
+        try:
+            self.require_manager_access()
+        except PermissionError:
+            return StatusResultError(code=F.FORBIDDEN)
         with self.store.transaction() as db:
             v = self._load(db, request_id)
             if not v:
@@ -288,8 +319,7 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
             )
 
     def summaries(self):
-        if not self.auth.manager_id:
-            raise PermissionError("Manager/source-agent authorised context required")
+        self.require_manager_access()
         return [
             {
                 "request_id": v.request_id,

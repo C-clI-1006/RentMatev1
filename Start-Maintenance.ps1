@@ -45,10 +45,12 @@ $env:RENTMATE_AUTH_TOKENS = @{
     $tenantToken = @{tenant_id='demo-tenant'; property_id='demo-property'}
     $managerToken = @{tenant_id='demo-tenant'; property_id='demo-property'; manager_id='demo-manager'}
 } | ConvertTo-Json -Compress
+Set-Location $backend
+& $python -m maintenance.seed_demo --database $env:DATABASE_PATH
+if ($LASTEXITCODE -ne 0) { throw 'Demo identity binding setup failed' }
 Write-Host 'RentMate Maintenance - demo accounts, local prototype only'
 Write-Host "Tenant token:  $tenantToken"
 Write-Host "Manager token: $managerToken"
 Write-Host 'Open http://127.0.0.1:8020/api/maintenance/demo'
 Write-Host 'API docs: http://127.0.0.1:8020/docs ; Ctrl+C stops server.'
-Set-Location $backend
 & $python -m uvicorn main:app --host 127.0.0.1 --port 8020

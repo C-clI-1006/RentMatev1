@@ -61,6 +61,9 @@ Environment variables:
   `{"REPLACE_RANDOM_TOKEN":{"tenant_id":"t1","property_id":"p1"}}`.
   A manager context additionally contains `manager_id`. Provision mappings
   on the server; clients cannot supply identity/property IDs in requests.
+  Every mapped tenant/property or manager/property pair must also exist in
+  the authoritative shared binding tables. A token never grants scope by
+  itself; missing bindings are denied.
 
 An absent token map denies API access. Replace `api.get_auth` with the
 team's verified login/session resolver during integration.
@@ -72,8 +75,11 @@ team's verified login/session resolver during integration.
 property membership before constructing the context. A tenant can only read
 their own requests; manager access is confined to the context's property.
 
-* POST /api/maintenance/requests: message_id, event_id, title, description,
-  optional location/evidence_refs. IDs of tenant/property come from session.
+* POST /api/maintenance/requests: title, description, optional
+  location/evidence_refs. Tenant/property come from the verified session;
+  message_id/event_id are generated server-side and cannot be supplied by a
+  browser. Communication uses `IMaintenanceIntake` directly when it must
+  preserve its own stable source IDs for retries.
 * GET /api/maintenance/requests: scoped list, including event history.
 * GET /api/maintenance/requests/{id}: scoped record, current version/history.
 * POST /api/maintenance/requests/{id}/assessment: manager manual assessment;
@@ -103,10 +109,12 @@ confidence is an uncertainty signal, not a calibrated guarantee.
 ## Persistence and integration boundaries
 
 Maintenance owns mc_request, mc_history and mc_outbox. These tables are
-created idempotently by Store. The old shared schema.sql remains a team draft;
-the module does NOT write to its incompatible maintenance_request table or
-directly write another agent's tables. Agree on a migration before retiring
-either schema. No existing records are deleted or automatically converted.
+created idempotently by Store. API startup applies the shared schema/migrations
+so authentication can read the authoritative tenant/property and
+manager/property bindings. Maintenance does NOT write to the incompatible
+maintenance_request table or directly write another agent's tables. Agree on
+a migration before retiring either maintenance schema. No existing records are
+deleted or automatically converted.
 
 Each state/version/history/outbox mutation is one SQLite transaction.
 The mc_history table is append-only through the application API; it is not
