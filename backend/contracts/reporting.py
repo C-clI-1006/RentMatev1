@@ -302,7 +302,7 @@ class MaintenanceRequestRef(BaseModel):
     request_id: RequestId
     title: str
     status: MaintenanceStatus
-    priority: Priority
+    priority: Priority | None = None  # Unknown while assessment/manual review is pending.
     created_at: datetime
     last_activity_at: datetime  # latest MaintenanceEvent.occurred_at
     references: list[SourceReference] = Field(default_factory=list)
