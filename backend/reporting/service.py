@@ -6,10 +6,12 @@ from collections.abc import Callable
 from datetime import timezone
 
 from contracts.maintenance import MaintenanceStatus, Priority
+from contracts.common import PropertyId
 from contracts.reporting import (
     CallerIdentity,
     GenerationRequest,
     GenerationResult,
+    IReportService,
     ManagerReportTrigger,
     NarrativeSource,
     OpenTaskRef,
@@ -18,6 +20,8 @@ from contracts.reporting import (
     ReportGenerationError,
     ReportNarrative,
     ReportOutcome,
+    ReportId,
+    ReportPeriod,
     ReportRecord,
     RiskItem,
     RiskRule,
@@ -35,7 +39,7 @@ NarrativeGenerator = Callable[[CollectedReportData], ReportNarrative]
 _TERMINAL = {MaintenanceStatus.CLOSED, MaintenanceStatus.CANCELLED}
 
 
-class ReportService:
+class ReportService(IReportService):
     def __init__(
         self,
         repository: ReportRepository,
@@ -111,12 +115,41 @@ class ReportService:
             ),
         )
         stored = self._repository.insert(record)
+        # Another request can win after the initial event-id lookup.
+        # Keep the same scope check when the repository reuses that winner.
+        if stored.property_id != request.property_id or stored.period != request.period:
+            return ReportGenerationError(
+                code="event_id_conflict",
+                detail="event id belongs to a different property or period",
+            )
         if stored.outcome is ReportOutcome.FAILED:
             return ReportGenerationError(
                 code="all_sources_unavailable",
                 detail="maintenance, rent and lease data are unavailable",
             )
         return ReportGenerated(report=stored, reused=stored.report_id != record.report_id)
+
+    def get(
+        self, report_id: ReportId, property_id: PropertyId, caller: CallerIdentity
+    ) -> ReportRecord | None:
+        try:
+            require_manager_property_access(
+                str(caller), property_id, SQLiteManagerRepository(self._repository.connection)
+            )
+        except PermissionError:
+            return None
+        return self._repository.get(str(report_id), str(property_id))
+
+    def list_for_period(
+        self, property_id: PropertyId, period: ReportPeriod, caller: CallerIdentity
+    ) -> list[ReportRecord]:
+        try:
+            require_manager_property_access(
+                str(caller), property_id, SQLiteManagerRepository(self._repository.connection)
+            )
+        except PermissionError:
+            return []
+        return self._repository.list_for_period(str(property_id), period)
 
     def _authorised(self, request: GenerationRequest, caller: str) -> bool:
         if isinstance(request.trigger, ScheduledReportTrigger):

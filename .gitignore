@@ -20,6 +20,9 @@ secrets/
 *.sqlite3
 *.sqlite
 
+# Evidence uploads (original files stored at runtime)
+backend/evidence_storage/
+
 # Node / frontend
 node_modules/
 dist/

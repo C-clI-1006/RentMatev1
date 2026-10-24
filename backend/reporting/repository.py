@@ -25,6 +25,22 @@ class ReportRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
+    def get(self, report_id: str, property_id: str) -> ReportRecord | None:
+        """Read one report only within the requested property."""
+        row = self.connection.execute(
+            "SELECT * FROM report WHERE report_id=? AND property_id=?",
+            (str(report_id), str(property_id)),
+        ).fetchone()
+        return self._record(row) if row is not None else None
+
+    def list_for_period(self, property_id: str, period: ReportPeriod) -> list[ReportRecord]:
+        rows = self.connection.execute(
+            "SELECT * FROM report WHERE property_id=? AND period_year=? "
+            "AND period_month=? ORDER BY generation",
+            (str(property_id), period.year, period.month),
+        ).fetchall()
+        return [self._record(row) for row in rows]
+
     def property_exists(self, property_id: str) -> bool:
         return (
             self.connection.execute(

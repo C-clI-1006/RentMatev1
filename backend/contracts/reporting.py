@@ -346,7 +346,9 @@ class RentRecordRef(BaseModel):
     period: str  # "YYYY-MM", matches rent_record.period
     amount_due: Decimal | None = None
     amount_paid: Decimal | None = None
-    status: str  # schema: unpaid | partial | paid | overdue
+    # Provider-derived three-state model agreed for UC4. A partial payment is
+    # represented by amount_paid < amount_due, never by a separate status.
+    status: Literal["paid", "unpaid-but-not-due", "overdue"]
     references: list[SourceReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -364,9 +366,8 @@ class RentRecordRef(BaseModel):
 class RentSectionData(BaseModel):
     availability: SectionAvailability
     records: list[RentRecordRef] = Field(default_factory=list)
-    # [OPEN Q — Ziheng #3] which rent statuses count as "unpaid/
-    # overdue" for the outstanding-task derivation: proposed
-    # status in ("unpaid", "overdue") — confirm.
+    # Outstanding rent uses both unpaid-but-not-due and overdue. The latter
+    # additionally triggers the deterministic overdue risk rule.
     note: str | None = None  # required when NOT_AVAILABLE
 
     @model_validator(mode="after")
@@ -380,18 +381,17 @@ class RentSectionData(BaseModel):
 class LeaseRef(BaseModel):
     """One lease relevant to the property (schema: lease).
 
-    NOTE: the `lease` table has no status column and no amount field.
-    [OPEN Q — Ziheng #1] `status` is proposed to be DERIVED from
-    start_date/end_date vs. the period (e.g. active / expiring /
-    expired / unknown) — or Ziheng may add a real status field to the
-    provider. Amount is deliberately out of scope for Stage 1.
+    The `lease` table has no status column and no amount field. Status is
+    deterministically derived by the provider from start_date/end_date and
+    the collection date: upcoming / active / expiring / expired. Amount is
+    deliberately out of scope for Stage 1.
     """
 
     lease_id: LeaseId
     tenant_id: TenantId | None = None
     start_date: date
     end_date: date | None = None
-    status: str  # derived or provider-provided; see NOTE
+    status: Literal["upcoming", "active", "expiring", "expired"]
     references: list[SourceReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -425,10 +425,8 @@ class OpenTaskRef(BaseModel):
 
     Proposed derivation [OPEN — group]:
     - maintenance: request still open at period end (non-terminal);
-    - rent:        rent record with unpaid/overdue status for the
-                   period [Ziheng #3];
-    - lease:       lease action still pending, e.g. expiring/unknown
-                   status [Ziheng #1].
+    - rent:        rent record with unpaid-but-not-due/overdue status;
+    - lease:       lease action still pending, e.g. upcoming/expiring.
     """
 
     source: Literal["maintenance", "rent", "lease"]
@@ -727,7 +725,7 @@ class ILeaseRentReportSource(ABC):
     """Batch read interface that reporting needs from the lease & rent
     module.
 
-    [DRAFT — Ziheng #1] ILeaseRentQuery.get_facts is scoped to a
+    ILeaseRentQuery.get_facts is scoped to a
     tenant question; reporting needs a property/period batch summary.
     No direct table reads: reporting consumes this interface only.
     """
@@ -862,8 +860,9 @@ class IReportService(ABC):
 #                 terminal-status set; in-period status-change source
 #                 (MaintenanceEvent.occurred_at vs maintenance_request
 #                 .updated_at).
-# Q3 [Ziheng]     ILeaseRentReportSource.period_summary shape; EMPTY vs
-#                 NOT_AVAILABLE per section.
+# Q3 [resolved — Ziheng] ILeaseRentReportSource.period_summary accepted
+#                 and implemented; EMPTY vs NOT_AVAILABLE is preserved
+#                 independently for rent and lease.
 # Q4 [Kerwin + Chaney] Enum drift: schema (DRAFT v0.1) priority/status
 #                 values differ from the contract enums; provider must
 #                 serve contract values; schema aligned by maintenance
@@ -873,8 +872,8 @@ class IReportService(ABC):
 # Q7 [group]      Outstanding-task derivation rule (three sources).
 # Q8 [group]      Risk rule list + thresholds (RiskRule is a starting
 #                 proposal only).
-# Q9 [Ziheng]     Lease status: derived from dates vs a real field;
-#                 amount out of scope for Stage 1.
+# Q9 [resolved — Ziheng] Lease status is derived from dates; amount is
+#                 out of scope for Stage 1.
 # Q10 [resolved]  LLM failure preserves structured data; scheduler uses a
 #                 stable event_id per property/month.
 # Q11 [resolved]  data_as_of records the

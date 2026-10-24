@@ -234,6 +234,91 @@ CREATE TABLE IF NOT EXISTS notification_event (
 );
 
 -- ---------------------------------------------------------------------------
+-- Evidence documents (owned: evidence — SCRUM-8)
+-- Conventions: upload / classification / association are SEPARATE state
+-- machines and must never be merged (upload success != classification
+-- success). Statuses in this increment: upload = saved (rejections never
+-- create a document row); classification = pending until a classifier
+-- lands; association = unassociated until linked by a future increment.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS evidence_document (
+    document_id       TEXT PRIMARY KEY,
+    tenant_id         TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id       TEXT NOT NULL REFERENCES property(property_id),
+    original_filename TEXT NOT NULL,
+    file_type         TEXT NOT NULL, -- normalised extension, e.g. "pdf"
+    size_bytes        INTEGER NOT NULL,
+    storage_ref       TEXT NOT NULL, -- local storage reference to the original file
+    upload_status     TEXT NOT NULL DEFAULT 'saved', -- saved (rejected uploads store nothing)
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_property
+    ON evidence_document (tenant_id, property_id);
+
+-- Reserved for future classification increments. One row per document,
+-- inserted as 'pending' at upload time; no classifier exists yet, so this
+-- row never leaves 'pending' in this increment.
+CREATE TABLE IF NOT EXISTS evidence_classification (
+    document_id   TEXT NOT NULL REFERENCES evidence_document(document_id),
+    classification_type TEXT,       -- e.g. lease | maintenance | receipt | unknown
+    status        TEXT NOT NULL DEFAULT 'pending', -- pending | classified | failed
+    source        TEXT NOT NULL DEFAULT 'none',    -- none | stub | llm (labelled doubles)
+    confidence    REAL,
+    details       TEXT NOT NULL DEFAULT '{}', -- JSON
+    created_at    TEXT NOT NULL,
+    classified_at TEXT,
+    PRIMARY KEY (document_id)
+);
+
+-- Reserved for future association increments (document -> maintenance
+-- request / lease). No rows are written in this increment.
+CREATE TABLE IF NOT EXISTS evidence_association (
+    association_id TEXT PRIMARY KEY,
+    document_id    TEXT NOT NULL REFERENCES evidence_document(document_id),
+    target_type    TEXT NOT NULL,    -- maintenance_request | lease
+    target_id      TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'unassociated', -- unassociated | associated | failed
+    created_at     TEXT NOT NULL,
+    associated_at  TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_association_target
+    ON evidence_association (target_type, target_id);
+
+-- Manager review of classification outcomes (owned: evidence — manager review
+-- increment). Append-only: one row PER REVIEW, so the same document may
+-- accumulate several reviews over time and every historical decision is
+-- retained. A review NEVER overwrites the machine's own outcome in
+-- evidence_classification (classification_type / source / confidence / failed
+-- details); it only records the human's settled final category. `action`
+-- mirrors the review command discriminator; `final_category` is always one of
+-- the five business categories (never `unknown`). `reviewed_by` comes from the
+-- auth context, never the command. Scope is enforced through the parent
+-- evidence_document row (tenant_id / property_id), same WHERE-clause rule as
+-- the other evidence tables.
+-- Effective review = the latest row for a document, by the stable sort rule
+-- reviewed_at DESC then rowid DESC (SQLite's monotonic append order), so even
+-- a tie on the UTC timestamp selects exactly one deterministic row.
+CREATE TABLE IF NOT EXISTS evidence_review (
+    review_id      TEXT PRIMARY KEY,
+    document_id    TEXT NOT NULL REFERENCES evidence_document(document_id),
+    action         TEXT NOT NULL,  -- confirm_suggested | select_category
+    final_category TEXT NOT NULL,  -- one of the five business categories (see CHECK)
+    reviewed_by    TEXT NOT NULL,  -- manager id from the auth context, not the command
+    reviewed_at    TEXT NOT NULL,  -- UTC
+    CHECK (action IN ('confirm_suggested', 'select_category')),
+    CHECK (final_category IN (
+        'lease_document', 'invoice', 'inspection_record',
+        'maintenance_photo', 'communication_record'
+    ))
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_review_document
+    ON evidence_review (document_id, reviewed_at);
+
+-- ---------------------------------------------------------------------------
 -- Audit (append-only)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit (
