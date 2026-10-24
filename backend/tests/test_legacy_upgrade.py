@@ -232,9 +232,9 @@ def test_init_connection_upgrades_legacy_db_to_due_date(tmp_path):
         "SELECT status FROM rent_record WHERE rent_record_id = 'rent-1'"
     ).fetchone()[0] == "paid"
 
-    # 3. The version chain was preserved and incremented exactly once:
-    #    v2 (already applied) -> v3, nothing beyond.
-    assert SCHEMA_VERSION == 3
+    # 3. The manager and due-date migrations remain ordered, followed by
+    #    the Evidence event receipt/timeline tables in v4.
+    assert SCHEMA_VERSION == 4
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # 4. The migration chain that predated this step is untouched.

@@ -43,11 +43,13 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict
 
 from contracts.evidence import (
     EvidenceReviewCommand,
@@ -60,6 +62,7 @@ from shared import AuthContext
 from .repository import EvidenceReviewRejectedError
 from .service import EvidenceScopeError, EvidenceService
 from .upload import MAX_FILE_BYTES
+from .maintenance import EvidenceReferenceError
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 bearer = HTTPBearer()
@@ -122,6 +125,50 @@ def _scope_error(exc: EvidenceScopeError) -> HTTPException:
         status_code=status,
         detail={"code": exc.code, "detail": exc.detail},
     )
+
+
+class EvidenceReferencesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    property_id: str
+    evidence_refs: list[str]
+
+
+def _integration_call(operation, *args):
+    try:
+        return operation(*args)
+    except PermissionError:
+        raise HTTPException(403, detail={"code": "forbidden"}) from None
+    except EvidenceReferenceError:
+        raise HTTPException(404, detail={"code": "evidence_not_found"}) from None
+    except sqlite3.Error:
+        raise HTTPException(503, detail={"code": "evidence_unavailable"}) from None
+
+
+@router.post("/references/validate")
+def validate_evidence_references(
+    body: EvidenceReferencesBody,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.validate_references, body.evidence_refs, body.property_id, auth)
+
+
+@router.get("/maintenance-events/{event_id}")
+def maintenance_event_receipt(
+    event_id: str, property_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.maintenance_receipt, event_id, property_id, auth)
+
+
+@router.get("/maintenance-timeline")
+def maintenance_event_timeline(
+    request_id: str, property_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.maintenance_timeline, request_id, property_id, auth)
 
 
 @router.post("/documents")

@@ -318,6 +318,28 @@ CREATE TABLE IF NOT EXISTS evidence_review (
 CREATE INDEX IF NOT EXISTS idx_evidence_review_document
     ON evidence_review (document_id, reviewed_at);
 
+-- Maintenance event acceptance: receipt + timeline + links are one transaction.
+CREATE TABLE IF NOT EXISTS evidence_event_receipt (
+    event_id TEXT PRIMARY KEY,
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    payload TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    received_by TEXT NOT NULL REFERENCES manager(manager_id)
+);
+CREATE TABLE IF NOT EXISTS evidence_maintenance_timeline (
+    event_id TEXT PRIMARY KEY REFERENCES evidence_event_receipt(event_id),
+    request_id TEXT NOT NULL,
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_maintenance_request
+    ON evidence_maintenance_timeline(property_id,request_id,occurred_at);
+CREATE TABLE IF NOT EXISTS evidence_event_document (
+    event_id TEXT NOT NULL REFERENCES evidence_maintenance_timeline(event_id),
+    document_id TEXT NOT NULL REFERENCES evidence_document(document_id),
+    PRIMARY KEY(event_id,document_id)
+);
+
 -- ---------------------------------------------------------------------------
 -- Audit (append-only)
 -- ---------------------------------------------------------------------------

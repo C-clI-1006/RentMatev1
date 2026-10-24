@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -115,6 +116,18 @@ class EvidenceRepository:
 
     def close(self) -> None:
         self._conn.close()
+
+    @contextmanager
+    def transaction(self):
+        """Serialize an atomic Evidence operation, including its permission reads."""
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     # -- writes ------------------------------------------------------------
 
@@ -332,7 +345,9 @@ class EvidenceRepository:
                     SELECT d.document_id, d.original_filename, d.file_type,
                            d.size_bytes, d.upload_status,
                            COALESCE(c.status, 'pending') AS classification_status,
-                           'unassociated' AS association_status,
+                           CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
+                               WHERE ed.document_id=d.document_id)
+                                THEN 'associated' ELSE 'unassociated' END AS association_status,
                            d.created_at AS uploaded_at,
                            c.details AS classification_details
                     FROM evidence_document d
@@ -367,7 +382,9 @@ class EvidenceRepository:
                        d.original_filename, d.file_type, d.size_bytes,
                        d.storage_ref, d.upload_status,
                        COALESCE(c.status, 'pending') AS classification_status,
-                       'unassociated' AS association_status,
+                       CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
+                               WHERE ed.document_id=d.document_id)
+                                THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
                        c.details AS classification_details
                 FROM evidence_document d
@@ -407,7 +424,9 @@ class EvidenceRepository:
                        d.original_filename, d.file_type, d.size_bytes,
                        d.storage_ref, d.upload_status,
                        COALESCE(c.status, 'pending') AS classification_status,
-                       'unassociated' AS association_status,
+                       CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
+                               WHERE ed.document_id=d.document_id)
+                                THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
                        c.details AS classification_details
                 FROM evidence_document d

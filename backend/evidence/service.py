@@ -64,6 +64,7 @@ from permissions import ManagerAccessDeniedError, MissingManagerIdentityError
 from .extract import extract_pdf_text
 from .repository import EvidenceRepository, EvidenceReviewRejectedError
 from .upload import remove_document, save_document, validate_upload
+from .maintenance import MaintenanceEvidenceReceiver
 
 
 # Stable, human-readable reasons for the extractor's manual-review codes
@@ -115,6 +116,19 @@ class EvidenceService:
         # (manual review), never guessing and never silently falling back
         # to a stub. Tests may inject a labelled stub explicitly.
         self._classifier = classifier if classifier is not None else build_document_classifier()
+        self.maintenance_events = MaintenanceEvidenceReceiver(repo)
+
+    def validate_references(self, evidence_refs, property_id, auth):
+        return self.maintenance_events.validate(evidence_refs, property_id, auth)
+
+    def receive_maintenance_event(self, payload, auth):
+        return self.maintenance_events.receive(payload, auth)
+
+    def maintenance_receipt(self, event_id, property_id, auth):
+        return self.maintenance_events.receipt(event_id, property_id, auth)
+
+    def maintenance_timeline(self, request_id, property_id, auth):
+        return self.maintenance_events.timeline(request_id, property_id, auth)
 
     # -- scope checks (every entry point) ------------------------------------
 

@@ -8,8 +8,8 @@
 
 **不覆盖（演示时不要声称）：**
 
-- **关联（association）与时间线（timeline）尚未完成**：演示文档始终保持 `association: "unassociated"`，不要演示或声称关联功能；maintenance → evidence 的 evidence 回调 / 时间线集成也未完成（见 `docs/maintenance/INTEGRATION.md` 第 4 节与 `JIRA_AND_CONTRIBUTION.md` 的 Pending 项），演示中不要出现或声称任何 timeline 记录。
-- **原型认证**：身份来自 `Authorization: Bearer <token>`，令牌在服务端 `RENTMATE_AUTH_TOKENS` JSON 映射中解析，是 TEST-ONLY 的桩，**不是真实认证**。租户上传与经理审核使用**不同的令牌 / 身份**；令牌本身不授予范围，所有绑定检查只是范围检查，不是授权。
+- **本演示不包含事件派发**：上传后默认 `association: "unassociated"`。新增的 Maintenance 回调会在成功接收真实引用后记录维修时间线并使引用文档显示 associated，接线及返回格式见 [联调契约](evidence_maintenance_integration.md)。该部分已做本地回归，仍待 Kerwin 联合评审；租约关联和通用前端时间线尚未实现。
+- **原型会话**：身份来自 `Authorization: Bearer <token>`，令牌在服务端 `RENTMATE_AUTH_TOKENS` JSON 映射中解析，尚未接入正式登录认证。租户上传与经理审核使用**不同的令牌 / 身份**；租户和经理的数据库物业绑定授权检查实际执行，不能用客户端身份字段绕过。
 - **不声称整个 UC6 已完成**：本演示只展示上传 → 分类 → 审阅这一条样例子路径，不代表分类准确性，也不代表 UC6 全部范围。
 - `accepted` 只代表上传被接受并保存；其他模块的 `queued` / `accepted` 状态也不能证明通知已经对外送达。
 - **文档中不含任何真实密钥或令牌**，也不包含任何私人机器路径。

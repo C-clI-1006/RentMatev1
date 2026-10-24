@@ -98,13 +98,21 @@ uncertain; reconcile the receipt before retry. Consumers must deduplicate replay
 
 ## 4. Maintenance -> Jenny / Evidence
 
+Local Evidence integration is now implemented; see
+[`../evidence_maintenance_integration.md`](../evidence_maintenance_integration.md)
+for callback wiring, authenticated validation/receipt queries, permanent rejection
+codes and timeout reconciliation. `change_status` now validates actual saved
+document IDs in its state-change transaction before confirmation/closure;
+placeholder IDs no longer pass. Kerwin's review and deployment wiring remain pending.
+
 Wire an evidence callback receiving the same event envelope. Persist event_id
 once; link request_id/property_id/evidence_refs to authorised existing records.
 Return True only after durable consumer acceptance. Replayed events cannot create
 another timeline entry. Unknown/cross-property evidence must be rejected or sent
 to review by the evidence owner. Current closure guards validate nonempty refs;
-actual evidence validity/ownership checking must be connected here and before
-accepting completion in the shared manager workflow.
+actual evidence validity/ownership checking is now connected locally before
+accepting completion in the shared manager workflow. The receiver also revalidates
+references before writing its receipt, timeline and links atomically.
 
 ## 5. Maintenance -> Sharon / Reporting
 

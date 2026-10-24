@@ -147,6 +147,8 @@ class TransitionFailureCode(str, Enum):
     VERSION_MISMATCH = "version_mismatch"  # A5: stale expectedVersion
     ILLEGAL_TRANSITION = "illegal_transition"
     EVIDENCE_REQUIRED = "evidence_required"  # A6: completion/closure guard
+    EVIDENCE_INVALID = "evidence_invalid"
+    EVIDENCE_UNAVAILABLE = "evidence_unavailable"
     FORBIDDEN = "forbidden"  # A1: unauthorised / unlinked
 
 

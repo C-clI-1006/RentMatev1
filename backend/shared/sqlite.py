@@ -36,7 +36,35 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+
+# v4: receipt, timeline entry and document links are committed together.
+_EVIDENCE_EVENT_DDL = """
+CREATE TABLE IF NOT EXISTS evidence_event_receipt (
+    event_id TEXT PRIMARY KEY,
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    payload TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    received_by TEXT NOT NULL REFERENCES manager(manager_id)
+);
+CREATE TABLE IF NOT EXISTS evidence_maintenance_timeline (
+    event_id TEXT PRIMARY KEY REFERENCES evidence_event_receipt(event_id),
+    request_id TEXT NOT NULL,
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_maintenance_request
+    ON evidence_maintenance_timeline(property_id,request_id,occurred_at);
+CREATE TABLE IF NOT EXISTS evidence_event_document (
+    event_id TEXT NOT NULL REFERENCES evidence_maintenance_timeline(event_id),
+    document_id TEXT NOT NULL REFERENCES evidence_document(document_id),
+    PRIMARY KEY(event_id,document_id)
+);
+"""
+
+
+def _ensure_evidence_events(conn: Connection) -> None:
+    conn.executescript(_EVIDENCE_EVENT_DDL)
 
 # Migration step for v2: manager + manager_property tables (owned:
 # permissions). The DDL mirrors db/schema.sql so the step is self-contained
@@ -114,6 +142,7 @@ def _ensure_rent_record_due_date(conn: Connection) -> None:
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
     3: _ensure_rent_record_due_date,
+    4: _ensure_evidence_events,
 }
 
 
