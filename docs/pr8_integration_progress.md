@@ -54,4 +54,9 @@
 - 未发现真实数据库、上传目录、凭据文件或二进制产物被跟踪；`.env.example` 中密钥为空、令牌映射为空对象，仅纳入配置模板。新增回归测试 `conftest.py`、`test_legacy_upgrade.py` 与本进度文档应纳入提交。
 - 本地 `backend/evidence-test-result.txt`、`backend/evidence-upload-result.txt` 保持未跟踪，不纳入提交，也不删除。`docs/pr8_integration_task.md` 是本地工作指令，保持未跟踪。
 - `docs/maintenance/verification/` 中三份版本化验收文档与原 MERGE_HEAD 完全一致，作为已有主干内容保留；没有新增本地运行日志。
-- 即将完成原 MERGE_HEAD `9b4b32e6f61883678c228fe239071479c4d3fd8e` 对应的合并提交；随后 fetch 并检查主干包含关系，再使用同一独立 Python 3.12 环境复验全部 backend 测试。
+- 已完成原 MERGE_HEAD `9b4b32e6f61883678c228fe239071479c4d3fd8e` 对应的本地合并提交：`1fa1eace71e91fae0cb6eb856dc9f5e9ffc307e8`，父提交为原分支 HEAD 与该主干提交。
+- 随后执行 `git fetch origin`，最新 `origin/main` 为 **`6c8b0fd4b47c920cf99b5cf099115e8ba1aef9c6`**（PR #12 合并提交）。它尚未被第一次合并包含，已通过 `merge --no-ff --no-commit origin/main` 合入，无冲突。13 个合入文件均与该主干逐字一致，包含主干已有的 Maintenance 报告提供者、HTTP 幂等、演示 seed 及回归；没有自行新增事件接口。Evidence、app wiring、权限及 SQLite 迁移集成未被覆盖。
+- 合入最新主干后完整 backend 测试：**260 passed，1 warning，33.73s**，无失败或跳过。命令仍为 `python -m pytest -q -p no:cacheprovider --tb=short`，使用 Codex **Python 3.12.14** 和 `backend/.venv/integration-test-deps` 独立依赖目录，`PYTHONDONTWRITEBYTECODE=1`。原 `.venv/Scripts/python.exe` 因缺失其引用的 Python 3.11 安装仍不可用；没有改写原环境配置。
+- 测试收集前即隔离 module-level app 的数据库与 storage，禁用 dotenv 加载、替换 LLM 凭据配置，测试分类器/传输桩及 socket 外部连接阻断保持生效。未读取真实敏感配置、调用真实 Qwen 或操作真实数据库。唯一 warning 仍为 Starlette/httpx TestClient 弃用提示。
+- 工作区及暂存区 `git diff --check` 均通过。最新主干合并和本节进度记录一起形成本地合并提交；其父提交为 `1fa1eace71e91fae0cb6eb856dc9f5e9ffc307e8` 与 `6c8b0fd4b47c920cf99b5cf099115e8ba1aef9c6`，最终哈希由完成后的 `git rev-parse HEAD` 报告，避免在提交内自引用。
+- 完成后应无 MERGE_HEAD、无已暂存或未暂存的跟踪文件修改；上述两个测试日志和任务说明三个文件继续保留为未跟踪文件。本轮不推送、不修改或合并 PR。
