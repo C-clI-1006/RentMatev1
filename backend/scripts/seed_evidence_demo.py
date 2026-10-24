@@ -1,9 +1,19 @@
 """TEST-ONLY: explicit seed for the evidence prototype demo.
 
-Creates ONE fictional tenant (T-DEMO-01), ONE fictional property
-(P-DEMO-01) and a tenant_property binding with role='manager'. These
-rows are fake identities for the prototype only: they are NOT real
-authentication and must never be treated as real users.
+Creates the separated demo identities for the evidence prototype:
+
+* ONE fictional tenant (T-DEMO-01),
+* ONE fictional manager (M-DEMO-01),
+* ONE fictional property (P-DEMO-01) shared by both,
+* a tenant_property binding (T-DEMO-01, P-DEMO-01) with role='resident'
+  — the tenant uploads through this binding,
+* a manager_property binding (M-DEMO-01, P-DEMO-01)
+  — the manager reviews through this binding.
+
+These rows are fake identities for the prototype only: they are NOT
+real authentication and must never be treated as real users. The
+manager is a proper `manager` row with a `manager_property` binding —
+NEVER a fake tenant_property(role='manager') row.
 
 Run explicitly from a shell (the service never calls this on startup):
 
@@ -17,12 +27,19 @@ Rules:
     (CREATE ... IF NOT EXISTS) and is NOT part of the seed data.
   * All seed data is written in ONE transaction; any error rolls back
     the whole round. Plain INSERT only — never INSERT OR REPLACE.
-  * Existing tenant/property rows are NEVER overwritten; an existing
-    role='manager' binding is left untouched (no duplicate writes).
-  * If the binding already exists with a NON-manager role, the script
-    reports an error and rolls back: it never upgrades/escalates a role.
+  * Existing tenant / property / manager rows are NEVER overwritten:
+    only the missing identity rows are created, and only with the
+    NOT NULL required columns (name / created_at); optional columns
+    (contact / address) stay NULL.
+  * Existing bindings are NEVER modified: the intended binding rows
+    are skipped, and any OTHER existing binding for the demo pair is
+    reported as a conflict and the whole round rolls back. In
+    particular an old tenant_property(T-DEMO-01, P-DEMO-01) row with
+    role='manager' is NOT silently rewritten to role='resident' — the
+    round fails with an explicit error and the operator must resolve
+    it by hand. No role is ever upgraded or escalated.
+  * Never creates tokens, API keys, or any kind of credential.
   * Never creates evidence / classification / review records.
-    No credentials or keys of any kind are written.
 """
 
 from __future__ import annotations
@@ -38,22 +55,24 @@ _BACKEND_DIR = _SCRIPT_DIR.parent                      # .../backend
 # Fixed default, resolved from this file's location (independent of CWD),
 # same convention as backend/main.py.
 _DEFAULT_DB_PATH = _BACKEND_DIR / "rentmate.db"
-# Project schema, resolved relative to this script (backend/scripts -> repo root).
-_SCHEMA_FILE = _BACKEND_DIR.parent / "db" / "schema.sql"
 
 TENANT_ID = "T-DEMO-01"
+MANAGER_ID = "M-DEMO-01"
 PROPERTY_ID = "P-DEMO-01"
-MANAGER_ROLE = "manager"
+TENANT_ROLE = "resident"
 
 _TENANT_NAME = "TEST-ONLY Demo Tenant (fictional; not a real identity)"
+_MANAGER_NAME = "TEST-ONLY Demo Manager (fictional; not a real identity)"
 _PROPERTY_NAME = "TEST-ONLY Demo Property (fictional; not a real identity)"
 
 
 class SeedConflictError(RuntimeError):
-    """The binding already exists with a role other than 'manager'.
+    """A demo binding row already exists in a state this seed must
+    not change.
 
     Raised INSIDE the seed transaction so the whole round rolls back;
-    the existing row is never modified and the role is never escalated.
+    the existing row is never modified, no role is ever escalated, and
+    an old manager-role tenant binding is never rewritten.
     """
 
 
@@ -66,30 +85,15 @@ def _seed(conn: sqlite3.Connection, now: str) -> dict[str, bool]:
     """
     result = {
         "tenant": False,
+        "manager": False,
         "property": False,
-        "binding": False,
+        "tenant_binding": False,
+        "manager_binding": False,
     }
 
     with conn:  # commit on success, rollback on any exception
-        row = conn.execute(
-            "SELECT role FROM tenant_property "
-            "WHERE tenant_id = ? AND property_id = ?",
-            (TENANT_ID, PROPERTY_ID),
-        ).fetchone()
-
-        if row is not None:
-            existing_role = row[0]
-            if existing_role != MANAGER_ROLE:
-                raise SeedConflictError(
-                    f"tenant_property({TENANT_ID}, {PROPERTY_ID}) already exists "
-                    f"with role={existing_role!r}; refusing to overwrite or "
-                    f"upgrade to '{MANAGER_ROLE}'. No data was written."
-                )
-            # role='manager' binding already present: foreign keys
-            # guarantee the parent rows exist, so nothing to write.
-            # No duplicates, no overwrite.
-            return result
-
+        # Create parent identities before FK-bound rows. Existing identity
+        # fields remain untouched; conflicts roll back the whole seed round.
         if (
             conn.execute(
                 "SELECT 1 FROM tenant WHERE tenant_id = ?", (TENANT_ID,)
@@ -105,6 +109,19 @@ def _seed(conn: sqlite3.Connection, now: str) -> dict[str, bool]:
 
         if (
             conn.execute(
+                "SELECT 1 FROM manager WHERE manager_id = ?", (MANAGER_ID,)
+            ).fetchone()
+            is None
+        ):
+            conn.execute(
+                "INSERT INTO manager (manager_id, name, created_at) "
+                "VALUES (?, ?, ?)",
+                (MANAGER_ID, _MANAGER_NAME, now),
+            )
+            result["manager"] = True
+
+        if (
+            conn.execute(
                 "SELECT 1 FROM property WHERE property_id = ?", (PROPERTY_ID,)
             ).fetchone()
             is None
@@ -116,12 +133,41 @@ def _seed(conn: sqlite3.Connection, now: str) -> dict[str, bool]:
             )
             result["property"] = True
 
-        conn.execute(
-            "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (TENANT_ID, PROPERTY_ID, MANAGER_ROLE, now),
-        )
-        result["binding"] = True
+        # -- tenant_property: expect the intended resident binding only
+        rows = conn.execute(
+            "SELECT role FROM tenant_property "
+            "WHERE tenant_id = ? AND property_id = ?",
+            (TENANT_ID, PROPERTY_ID),
+        ).fetchall()
+        for role in (r[0] for r in rows):
+            if role != TENANT_ROLE:
+                raise SeedConflictError(
+                    f"tenant_property({TENANT_ID}, {PROPERTY_ID}) already "
+                    f"exists with role={role!r}; refusing to overwrite or "
+                    f"rewrite it to '{TENANT_ROLE}'. No data was written; "
+                    f"resolve the binding by hand and re-run."
+                )
+        if not rows:
+            conn.execute(
+                "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (TENANT_ID, PROPERTY_ID, TENANT_ROLE, now),
+            )
+            result["tenant_binding"] = True
+
+        # -- manager_property: expect (at most) the intended binding
+        existing = conn.execute(
+            "SELECT 1 FROM manager_property "
+            "WHERE manager_id = ? AND property_id = ?",
+            (MANAGER_ID, PROPERTY_ID),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO manager_property (manager_id, property_id, created_at) "
+                "VALUES (?, ?, ?)",
+                (MANAGER_ID, PROPERTY_ID, now),
+            )
+            result["manager_binding"] = True
 
     return result
 
@@ -136,8 +182,9 @@ def _print_state(label: str, created: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "TEST-ONLY: seed the fictional demo tenant/property/manager "
-            "binding for the evidence prototype. Not real authentication."
+            "TEST-ONLY: seed the separated demo identities (tenant "
+            "T-DEMO-01 / manager M-DEMO-01 / property P-DEMO-01) for the "
+            "evidence prototype. Not real authentication."
         ),
     )
     parser.add_argument(
@@ -158,8 +205,13 @@ def main(argv: list[str] | None = None) -> int:
     conn = sqlite3.connect(str(args.db))
     try:
         conn.execute("PRAGMA foreign_keys = ON")
-        # Idempotent DDL (CREATE ... IF NOT EXISTS); not seed data.
-        conn.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
+        # Upgrade legacy columns before applying schema indexes; not seed data.
+        if str(_BACKEND_DIR) not in sys.path:
+            sys.path.insert(0, str(_BACKEND_DIR))
+        from shared.sqlite import apply_schema
+
+        conn.row_factory = sqlite3.Row
+        apply_schema(conn)
 
         try:
             result = _seed(conn, now)
@@ -173,10 +225,15 @@ def main(argv: list[str] | None = None) -> int:
         conn.close()
 
     _print_state(f"tenant {TENANT_ID}", result["tenant"])
+    _print_state(f"manager {MANAGER_ID}", result["manager"])
     _print_state(f"property {PROPERTY_ID}", result["property"])
     _print_state(
-        f"binding ({TENANT_ID}, {PROPERTY_ID}, role={MANAGER_ROLE})",
-        result["binding"],
+        f"tenant_property ({TENANT_ID}, {PROPERTY_ID}, role={TENANT_ROLE})",
+        result["tenant_binding"],
+    )
+    _print_state(
+        f"manager_property ({MANAGER_ID}, {PROPERTY_ID})",
+        result["manager_binding"],
     )
     if not any(result.values()):
         print("nothing to do: all rows already present.")

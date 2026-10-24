@@ -1,0 +1,67 @@
+{
+  "checked_at_utc": "2026-10-24T01:37:36.128016+00:00",
+  "model": "campus-qwen",
+  "cases": [
+    {
+      "case": "routine",
+      "passed": true,
+      "elapsed_seconds": 5.26,
+      "status": "assessed",
+      "priority": "routine",
+      "assessment": {
+        "rationale": "The cupboard is still functional and no immediate hazard or injury is reported, indicating a minor repair rather than urgent or emergency maintenance.",
+        "confidence": 0.95,
+        "source": "llm",
+        "source_message_id": "460b88ac-734e-43b1-b79d-0d64428d10d3",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "urgent",
+      "passed": true,
+      "elapsed_seconds": 4.81,
+      "status": "assessed",
+      "priority": "urgent",
+      "assessment": {
+        "rationale": "No hot water from any tap since yesterday while cold water works suggests a water heating system fault; no immediate danger signs such as gas smell, smoke, injury, or major leak.",
+        "confidence": 0.8,
+        "source": "llm",
+        "source_message_id": "5bb46948-18bc-49ae-8847-0afed424f669",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "emergency",
+      "passed": true,
+      "elapsed_seconds": 2.83,
+      "status": "assessed",
+      "priority": "emergency",
+      "assessment": {
+        "rationale": "A strong gas smell with hissing from a gas pipe indicates a possible gas leak, which is an immediate safety risk.",
+        "confidence": 0.98,
+        "source": "llm",
+        "source_message_id": "2b4599f7-0348-498a-a822-ce8faf7c3d29",
+        "evidence_refs": []
+      }
+    },
+    {
+      "case": "uncertain",
+      "passed": true,
+      "elapsed_seconds": 2.19,
+      "status": "under_review",
+      "priority": null,
+      "assessment": {
+        "review_reason": "Model requested more issue details; manual review required."
+      }
+    }
+  ],
+  "checks": {
+    "approved_lifecycle_closed": true,
+    "history_persisted": true,
+    "reporting_summary": true,
+    "emergency_alert_queued": true,
+    "delivery_truthfully_pending": true
+  },
+  "boundary": "Synthetic API requests; real model; no real tenant/evidence consumer delivery.",
+  "passed": true
+}

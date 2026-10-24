@@ -35,32 +35,52 @@ from evidence.router import build_evidence_service
 from evidence.upload import MAX_FILE_BYTES
 from llm.classify import QwenDocumentClassifier
 from main import create_app
+from llm.classify import StubDocumentClassifier
 from shared import AuthContext
 
-# Prototype identity (TEST-ONLY headers, not real authentication)
+# Prototype identity (TEST-ONLY bearer tokens, not real authentication):
+# the tenant_id / property_id come ONLY from the server-side
+# RENTMATE_AUTH_TOKENS map, never from the request.
 TENANT_1 = "T1"
 PROP_1 = "P1"
 TENANT_2 = "T2"
 PROP_2 = "P2"
 
-HEADERS_T1_P1 = {
-    "X-Prototype-Tenant-Id": TENANT_1,
-    "X-Prototype-Property-Id": PROP_1,
-}
-HEADERS_T2_P2 = {
-    "X-Prototype-Tenant-Id": TENANT_2,
-    "X-Prototype-Property-Id": PROP_2,
-}
+# Fictitious session tokens (TEST-ONLY, not real credentials).
+TOKEN_T1_P1 = "ev-t1-p1-fixture-token"
+TOKEN_T2_P2 = "ev-t2-p2-fixture-token"
+TOKEN_FORGED_TENANT = "ev-forged-fixture-token"
+
+
+def _auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+HEADERS_T1_P1 = _auth_headers(TOKEN_T1_P1)
+HEADERS_T2_P2 = _auth_headers(TOKEN_T2_P2)
 # T2 claiming the P1 property: the binding exists (stub data) but the
-# header property does not match the header tenant's property context.
-HEADERS_T2_CLAIMING_P1 = {
-    "X-Prototype-Tenant-Id": TENANT_2,
-    "X-Prototype-Property-Id": PROP_1,
-}
-HEADERS_FORGED_TENANT = {
-    "X-Prototype-Tenant-Id": "T-EVIL",
-    "X-Prototype-Property-Id": PROP_1,
-}
+# token's property context does not match the requested property.
+HEADERS_T2_CLAIMING_P1 = _auth_headers(TOKEN_T2_P2)
+HEADERS_FORGED_TENANT = _auth_headers(TOKEN_FORGED_TENANT)
+
+
+def _seed_auth_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Map the fictitious test tokens onto the seeded tenants/properties.
+
+    `get_auth` reads RENTMATE_AUTH_TOKENS per request (never monkeypatched:
+    the real dependency stays in place), so the mapping is applied as an
+    environment variable via monkeypatch and reverted automatically.
+    """
+    monkeypatch.setenv(
+        "RENTMATE_AUTH_TOKENS",
+        json.dumps(
+            {
+                TOKEN_T1_P1: {"tenant_id": TENANT_1, "property_id": PROP_1},
+                TOKEN_T2_P2: {"tenant_id": TENANT_2, "property_id": PROP_2},
+                TOKEN_FORGED_TENANT: {"tenant_id": "T-EVIL", "property_id": PROP_1},
+            }
+        ),
+    )
 
 
 def _seed_bindings(conn: sqlite3.Connection) -> None:
@@ -73,15 +93,22 @@ def _seed_bindings(conn: sqlite3.Connection) -> None:
         "INSERT INTO property (property_id, name, address, created_at) VALUES (?, ?, ?, ?)",
         [(PROP_1, "Property One", "addr1", now), (PROP_2, "Property Two", "addr2", now)],
     )
-    conn.executemany(
-        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) VALUES (?, ?, 'manager', ?)",
-        [(TENANT_1, PROP_1, now), (TENANT_2, PROP_2, now)],
+    # T1 (the normal-upload tenant) holds a `resident` binding.
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT_1, PROP_1, now),
+    )
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'manager', ?)",
+        (TENANT_2, PROP_2, now),
     )
     conn.commit()
 
 
 @pytest.fixture()
-def client(tmp_path: Path):
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = str(tmp_path / "evidence_test.db")
     storage_root = str(tmp_path / "evidence_storage")
 
@@ -96,7 +123,11 @@ def client(tmp_path: Path):
     finally:
         conn.close()
 
-    app = create_app(db_path, storage_root)
+    # Map the fictitious tokens (server-side RENTMATE_AUTH_TOKENS) onto the
+    # seeded tenants/properties for the duration of the fixture.
+    _seed_auth_tokens(monkeypatch)
+
+    app = create_app(db_path, storage_root, classifier=StubDocumentClassifier())
     with TestClient(app) as c:
         yield c
 
@@ -296,13 +327,90 @@ def test_forged_unknown_tenant_is_forbidden(client):
     assert r.status_code == 403
 
 
-def test_missing_identity_headers_is_400_with_test_only_notice(client):
+def test_missing_bearer_is_rejected(client, tmp_path):
+    """No Bearer token -> 401 before any processing; nothing is stored."""
     r = client.get("/api/evidence/documents", params={"property_id": PROP_1})
-    assert r.status_code == 400
-    assert "TESTING ONLY" in r.json()["detail"]
+    assert r.status_code == 401
 
     r = _upload(client, "one.pdf", b"%PDF-1.4", {}, PROP_1)
-    assert r.status_code == 400
+    assert r.status_code == 401
+
+    # A rejected request leaves no residue: no file on disk, no DB row.
+    assert list((tmp_path / "evidence_storage").glob("**/*")) == []
+    check = sqlite3.connect(str(tmp_path / "evidence_test.db"))
+    try:
+        assert check.execute("SELECT COUNT(*) FROM evidence_document").fetchone()[0] == 0
+    finally:
+        check.close()
+
+
+def test_prototype_headers_without_bearer_are_rejected(client, tmp_path):
+    """Legacy X-Prototype-* identity headers WITHOUT a Bearer token -> 401.
+
+    The X-Prototype-* headers are not an identity source (identity comes
+    only from the server-side token map via the Bearer token), so a
+    request carrying them but no Authorization is rejected before any
+    processing and nothing is stored.
+    """
+    headers = {
+        "X-Prototype-Tenant-Id": TENANT_1,
+        "X-Prototype-Property-Id": PROP_1,
+        "X-Prototype-Manager-Id": "M1",
+    }
+    r = _upload(client, "one.pdf", b"%PDF-1.4", headers, PROP_1)
+    assert r.status_code == 401
+
+    # No residue: no file on disk, no DB row.
+    assert list((tmp_path / "evidence_storage").glob("**/*")) == []
+    check = sqlite3.connect(str(tmp_path / "evidence_test.db"))
+    try:
+        assert check.execute("SELECT COUNT(*) FROM evidence_document").fetchone()[0] == 0
+    finally:
+        check.close()
+
+
+def test_forged_identity_headers_cannot_override_server_token(client, tmp_path):
+    """Valid T1/P1 Bearer + forged T2/P2/manager X-Prototype-* headers:
+    the forged headers must neither re-attribute the upload to T2/P2
+    nor grant any cross-property (P2) read access."""
+    forged = {
+        **HEADERS_T1_P1,
+        "X-Prototype-Tenant-Id": TENANT_2,
+        "X-Prototype-Property-Id": PROP_2,
+        "X-Prototype-Manager-Id": "M1",
+    }
+    r = _upload(client, "forged.pdf", b"%PDF-1.4 forged-header bytes", forged, PROP_1)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "accepted"
+    assert body["document"]["tenant_id"] == TENANT_1
+    assert body["document"]["property_id"] == PROP_1
+
+    # DB attribution: the row belongs to the TOKEN's T1/P1, not T2/P2.
+    check = sqlite3.connect(str(tmp_path / "evidence_test.db"))
+    try:
+        rows = check.execute(
+            "SELECT tenant_id, property_id FROM evidence_document"
+        ).fetchall()
+    finally:
+        check.close()
+    assert rows == [(TENANT_1, PROP_1)]
+
+    # Forged headers must not expand cross-property (P2) reads: the scope
+    # check still fails on the token's P1 -> flat 403, no existence leak.
+    r = client.get(
+        "/api/evidence/documents", params={"property_id": PROP_2}, headers=forged
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "forbidden"
+
+    r = client.get(
+        f"/api/evidence/documents/{body['document']['document_id']}",
+        params={"property_id": PROP_2},
+        headers=forged,
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "forbidden"
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +478,7 @@ def test_storage_failure_leaves_nothing_in_db(tmp_path):
         def save_document(self, doc):
             repo_calls.append(doc.document_id)
 
-        def has_manager_access(self, tenant_id, property_id):
+        def has_tenant_access(self, tenant_id, property_id):
             return True
 
     service = build_evidence_service(db_path, str(tmp_path / "storage_dummy"))

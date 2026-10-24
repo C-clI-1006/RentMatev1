@@ -10,8 +10,10 @@ Rules (binding):
 - Single retry owner: the dispatcher/queue executes retries. Producers
   (communication, maintenance) must not retry on their own, to avoid
   double sends.
-- Before any real send, the payload must be the approved version only
-  (see contracts.drafting) and permission checks must run again.
+- PROPOSAL: tenant sends use either the manager-approved version or an
+  exact routine reply version eligible under deterministic policy. Recheck
+  permissions and eligibility before dispatch; never fabricate approval.
+  Manager alerts do not require tenant-reply approval. Minimise payloads.
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ class NotificationEvent(BaseModel):
     kind: NotificationKind
     request_id: RequestId | None = None
     message_id: MessageId | None = None
-    payload: dict = Field(default_factory=dict)  # approved content only
+    payload: dict = Field(default_factory=dict)  # minimal, authorised payload; see version rules above
     created_at: datetime  # UTC
 
 

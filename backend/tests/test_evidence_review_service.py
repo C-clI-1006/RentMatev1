@@ -1,42 +1,7 @@
-"""Service tests for `EvidenceService.review` (manager review).
+"""Service regressions using manager_property and temporary databases.
 
-Run: pytest backend/tests/test_evidence_review_service.py
-
-Temp database (built from db/schema.sql + prototype seed rows) — no
-network, no HTTP. The service is exercised directly (no router): a
-`confirm_suggested` review over a `classified` machine outcome must
-settle the final category to the machine's own suggestion, record
-`reviewed_by` as `auth.tenant_id` (never the unverified `manager_id`),
-and persist the review record. Every assertion about what was actually
-persisted is re-read through a SEPARATE sqlite3 connection, so the
-tests verify the database file itself, not the service's in-memory
-view.
-
-Coverage (this increment):
-- confirm_suggested success: final category == the machine's suggested
-  category; `reviewed_by` == auth.tenant_id even when a different
-  manager_id is present on the auth context; the review record is
-  persisted (action / final_category / reviewed_by / reviewed_at) and
-  the details `review_required` flag is cleared while the machine's
-  own outcome columns stay untouched.
-- confirm_suggested rejection: an honest `unknown` suggestion, a
-  `failed` machine outcome, and an empty category are all un-
-  confirmable — each raises `EvidenceReviewRejectedError` and the
-  database is left untouched (no review row, classification row byte-
-  for-byte unchanged).
-- select_category over a `failed` machine outcome: the manager's
-  chosen category (`invoice`) is settled as the final category,
-  `reviewed_by` is `auth.tenant_id`, the review record is persisted
-  and the `review_required` flag cleared — while the machine's own
-  failed outcome (status / NULL category / failure reason) is NOT
-  overwritten with the human's category.
-- scope rejections: a request property mismatching the auth context
-  (forbidden), a tenant without a manager binding (forbidden), and an
-  unknown document in scope (not_found) raise `EvidenceScopeError`
-  and leave the database untouched (no review row, classification
-  unchanged).
+Retains persistence, machine outcome, rejection and history assertions.
 """
-
 from __future__ import annotations
 
 import json
@@ -60,7 +25,7 @@ _SCHEMA_FILE = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 TENANT_1 = "T1"
 PROP_1 = "P1"
-MANAGER_9 = "mgr-9"  # set on the auth context; must NOT leak into reviewed_by
+MANAGER_9 = "mgr-9"  # verified through manager_property
 
 NOW = "2026-10-23T00:00:00+00:00"
 
@@ -70,9 +35,15 @@ DOC_3 = "doc-ev-svc-scope-1"
 DOC_4 = "doc-ev-svc-scope-4"  # in-scope seeded row, asserted unchanged
 DOC_4_MISSING = "doc-ev-svc-scope-4-missing"  # never seeded
 DOC_5 = "doc-ev-svc-dup-1"  # reviewed twice with the same command
+DOC_6 = "doc-ev-svc-xten-1"  # reviewed by a manager of ANOTHER tenant
 
 PROP_2 = "P2"  # a second property, used by the scope-rejection cases
 TENANT_2 = "T2"  # a tenant WITHOUT a manager binding
+# The manager's OWN tenant in the cross-tenant case: a different tenant
+# from the document owner, with NO tenant_property binding of its own on
+# PROP_1 (the manager never needs one).
+TENANT_MGR = "T9"
+MANAGER_1 = "M1"  # bound to PROP_1 via manager_property ONLY
 
 # The machine's settled suggestion (status `classified`) that the
 # manager is about to confirm.
@@ -96,9 +67,11 @@ def _seed_bindings(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
-        "VALUES (?, ?, 'manager', ?)",
+        "VALUES (?, ?, 'resident', ?)",
         (TENANT_1, PROP_1, NOW),
     )
+    conn.execute("INSERT INTO manager VALUES (?, ?, ?)", (MANAGER_9, "Independent Manager", NOW))
+    conn.execute("INSERT INTO manager_property VALUES (?, ?, ?)", (MANAGER_9, PROP_1, NOW))
     conn.commit()
 
 
@@ -178,9 +151,7 @@ def test_confirm_suggested_success_settles_machine_category(tmp_path):
     service, repo = _make_service(tmp_path, DOC_1)
     db_path = str(tmp_path / f"svc_{DOC_1}.db")
     try:
-        # The auth context carries a manager_id on purpose: the
-        # prototype identity rule says `reviewed_by` must be the
-        # binding-verified tenant, never the unverified manager_id.
+        # Manager identity is separately verified through manager_property.
         auth = AuthContext(tenant_id=TENANT_1, property_id=PROP_1,
                            manager_id=MANAGER_9)
         cmd = ReviewConfirmSuggested(document_id=DOC_1, property_id=PROP_1)
@@ -191,9 +162,9 @@ def test_confirm_suggested_success_settles_machine_category(tmp_path):
         assert result.document_id == DOC_1
         assert result.final_category is DocumentCategory.LEASE_DOCUMENT
         assert result.final_category.value == MACHINE_CATEGORY
-        # Prototype identity: reviewed_by is auth.tenant_id.
-        assert result.reviewed_by == TENANT_1
-        assert result.reviewed_by != MANAGER_9
+        # Reviewer is the manager_id verified through manager_property.
+        assert result.reviewed_by == MANAGER_9
+        assert result.reviewed_by != TENANT_1
         assert result.reviewed_at  # generated by the backend, not the caller
 
         # Independent connection: the review record is REALLY persisted
@@ -209,7 +180,7 @@ def test_confirm_suggested_success_settles_machine_category(tmp_path):
             assert len(rev) == 1
             assert rev[0][1] == "confirm_suggested"
             assert rev[0][2] == MACHINE_CATEGORY
-            assert rev[0][3] == TENANT_1
+            assert rev[0][3] == MANAGER_9
             assert datetime.fromisoformat(rev[0][4]) == result.reviewed_at
 
             # The details flag was cleared, the rest of details kept.
@@ -314,8 +285,8 @@ def test_select_category_over_failed_settles_chosen_category(tmp_path):
         assert result.document_id == DOC_2
         assert result.final_category is DocumentCategory.INVOICE
         assert result.final_category.value == "invoice"
-        assert result.reviewed_by == TENANT_1
-        assert result.reviewed_by != MANAGER_9
+        assert result.reviewed_by == MANAGER_9
+        assert result.reviewed_by != TENANT_1
         assert result.reviewed_at  # generated by the backend, not the caller
 
         # Independent connection: the review record is persisted with the
@@ -332,7 +303,7 @@ def test_select_category_over_failed_settles_chosen_category(tmp_path):
             assert len(rev) == 1
             assert rev[0][0] == "select_category"
             assert rev[0][1] == "invoice"
-            assert rev[0][2] == TENANT_1
+            assert rev[0][2] == MANAGER_9
             assert datetime.fromisoformat(rev[0][3]) == result.reviewed_at
 
             # The details flag is cleared; the machine's failure reason
@@ -356,6 +327,133 @@ def test_select_category_over_failed_settles_chosen_category(tmp_path):
             ).fetchone()
             assert row == ("failed", None, None, "stub", NOW, NOW)
             assert row[1] != "invoice"  # machine category untouched
+        finally:
+            check.close()
+    finally:
+        repo.close()
+
+
+def test_select_category_by_manager_of_other_tenant(tmp_path):
+    # Cross-tenant review: the uploaded document belongs to tenant T1 on
+    # P1, but the manager's auth context carries a DIFFERENT tenant_id
+    # (T9) with manager_id M1. M1 is bound to P1 through the verified
+    # `manager_property` table ONLY — no `tenant_property` row is created
+    # for M1/T9 (a manager's access never comes from a tenant binding).
+    # The machine failed, so `select_category` is the only viable review.
+    service, repo = _make_service(
+        tmp_path,
+        DOC_6,
+        status="failed",
+        classification_type=None,
+        confidence=None,
+        details_json=json.dumps(
+            {"code": "pdf_no_text",
+             "reason": "pages exist but no extractable text",
+             "review_required": True}
+        ),
+    )
+    db_path = str(tmp_path / f"svc_{DOC_6}.db")
+    # Create the manager and its verified property assignment (existing
+    # schema): manager(M1) + manager_property(M1, P1). No tenant_property
+    # binding for M1 or for T9 on P1 — that would be faking a tenant
+    # binding for the manager.
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO manager (manager_id, name, created_at) "
+            "VALUES (?, ?, ?)",
+            (MANAGER_1, "Manager One", NOW),
+        )
+        conn.execute(
+            "INSERT INTO manager_property (manager_id, property_id, created_at) "
+            "VALUES (?, ?, ?)",
+            (MANAGER_1, PROP_1, NOW),
+        )
+        conn.execute(
+            "INSERT INTO tenant (tenant_id, name, contact, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (TENANT_MGR, "Tenant Nine", "c9", NOW),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        # The manager's auth context: tenant T9 (NOT the document owner),
+        # property P1, manager_id M1. The router resolves this from the
+        # server-side token map; the command never carries a manager_id.
+        auth = AuthContext(tenant_id=TENANT_MGR, property_id=PROP_1,
+                           manager_id=MANAGER_1)
+        cmd = ReviewSelectCategory(
+            document_id=DOC_6,
+            property_id=PROP_1,
+            category=DocumentCategory.INVOICE,
+        )
+
+        result = service.review(cmd, auth)
+
+        # Success: the cross-tenant manager settles the chosen category,
+        # recorded under the verified manager identity — never the auth
+        # tenant (the document owner) and never any other tenant.
+        assert result.document_id == DOC_6
+        assert result.final_category is DocumentCategory.INVOICE
+        assert result.final_category.value == "invoice"
+        assert result.reviewed_by == MANAGER_1
+        assert result.reviewed_by != TENANT_MGR
+        assert result.reviewed_by != TENANT_1
+        assert result.reviewed_at  # generated by the backend, not the caller
+
+        # Independent connection: the review record is REALLY persisted
+        # with the verified manager identity.
+        check = sqlite3.connect(db_path)
+        try:
+            rev = check.execute(
+                "SELECT review_id, action, final_category, reviewed_by, "
+                "reviewed_at FROM evidence_review WHERE document_id = ?",
+                (DOC_6,),
+            ).fetchall()
+            assert len(rev) == 1
+            assert rev[0][1] == "select_category"
+            assert rev[0][2] == "invoice"
+            assert rev[0][3] == MANAGER_1
+            assert datetime.fromisoformat(rev[0][4]) == result.reviewed_at
+
+            # The document is STILL owned by the uploading tenant (T1) on
+            # P1 — the cross-tenant review changed nothing about
+            # ownership.
+            owner = check.execute(
+                "SELECT tenant_id, property_id FROM evidence_document "
+                "WHERE document_id = ?",
+                (DOC_6,),
+            ).fetchone()
+            assert owner == (TENANT_1, PROP_1)
+
+            # The machine's own FAILED outcome is NOT overwritten by the
+            # human's category: status / NULL category / failure reason
+            # stay as seeded; only the details review_required flag
+            # flipped (code / reason retained).
+            row = check.execute(
+                "SELECT status, classification_type, confidence, details, "
+                "source, created_at, classified_at FROM "
+                "evidence_classification WHERE document_id = ?",
+                (DOC_6,),
+            ).fetchone()
+            assert row[0] == "failed"
+            assert row[1] is None  # machine category untouched
+            assert row[1] != "invoice"
+            assert row[2] is None
+            assert row[4:] == ("stub", NOW, NOW)
+            details = json.loads(row[3])
+            assert details["review_required"] is False
+            assert details["code"] == "pdf_no_text"
+            assert details["reason"] == "pages exist but no extractable text"
+
+            # No tenant binding was faked for the manager: neither T9 nor
+            # M1 appears in tenant_property for P1.
+            assert check.execute(
+                "SELECT COUNT(*) FROM tenant_property WHERE "
+                "tenant_id IN (?, ?)",
+                (TENANT_MGR, MANAGER_1),
+            ).fetchone()[0] == 0
         finally:
             check.close()
     finally:
@@ -416,7 +514,7 @@ def test_review_request_property_mismatch_forbidden(tmp_path):
 
 def test_review_tenant_without_manager_binding_forbidden(tmp_path):
     # Same tenant+property as the auth context, but this tenant has NO
-    # `tenant_property` manager binding: the scope check rejects even
+    # `manager_property` binding: the scope check rejects even
     # though the document is a perfectly confirmable one.
     service, repo = _make_service(tmp_path, DOC_3)
     db_path = str(tmp_path / f"svc_{DOC_3}.db")
@@ -433,7 +531,7 @@ def test_review_tenant_without_manager_binding_forbidden(tmp_path):
         conn.close()
     try:
         auth = AuthContext(tenant_id=TENANT_2, property_id=PROP_1,
-                           manager_id=MANAGER_9)
+                           manager_id="unbound-manager")
         cmd = ReviewConfirmSuggested(document_id=DOC_3, property_id=PROP_1)
 
         with pytest.raises(EvidenceScopeError) as excinfo:
@@ -467,7 +565,7 @@ def test_review_request_property_mismatch_forbidden_doc_4(tmp_path):
 
 def test_review_tenant_without_manager_binding_forbidden_doc_4(tmp_path):
     # Same unbound tenant as the DOC_3 case, on a fresh seeded
-    # document: TENANT_2 has NO `tenant_property` manager binding, so
+    # document: TENANT_2 has NO `manager_property` binding, so
     # the scope check rejects even though DOC_4 could otherwise be
     # confirmed.
     service, repo = _make_service(tmp_path, DOC_4)
@@ -485,7 +583,7 @@ def test_review_tenant_without_manager_binding_forbidden_doc_4(tmp_path):
         conn.close()
     try:
         auth = AuthContext(tenant_id=TENANT_2, property_id=PROP_1,
-                           manager_id=MANAGER_9)
+                           manager_id="unbound-manager")
         cmd = ReviewConfirmSuggested(document_id=DOC_4, property_id=PROP_1)
 
         with pytest.raises(EvidenceScopeError) as excinfo:
@@ -577,9 +675,9 @@ def test_duplicate_review_is_idempotent_single_record(tmp_path):
         assert first.final_category is DocumentCategory.LEASE_DOCUMENT
         assert second.final_category is first.final_category
         assert second.final_category.value == MACHINE_CATEGORY
-        assert first.reviewed_by == TENANT_1
+        assert first.reviewed_by == MANAGER_9
         assert second.reviewed_by == first.reviewed_by
-        assert second.reviewed_by != MANAGER_9
+        assert second.reviewed_by != TENANT_1
         assert first.reviewed_at
         assert second.reviewed_at == first.reviewed_at
 
@@ -596,7 +694,7 @@ def test_duplicate_review_is_idempotent_single_record(tmp_path):
             assert rev_after[0][0] == rev_before[0][0]  # review_id unchanged
             assert rev_after[0][1] == "confirm_suggested"
             assert rev_after[0][2] == MACHINE_CATEGORY
-            assert rev_after[0][3] == TENANT_1
+            assert rev_after[0][3] == MANAGER_9
             assert datetime.fromisoformat(rev_after[0][4]) == first.reviewed_at
 
             # The machine's own outcome (and the flag already cleared by

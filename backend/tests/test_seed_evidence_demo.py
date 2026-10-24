@@ -1,23 +1,7 @@
-"""Tests for backend/scripts/seed_evidence_demo.py (TEST-ONLY demo seed).
+"""Temporary-DB seed regressions: separate tenant and manager bindings.
 
-Drives the script's real entry point (`seed.main(["--db", ...])`) against a
-throwaway SQLite file in pytest's tmp_path — never the repo's rentmate.db.
-The script is loaded from its file path (it is explicit run-only tooling,
-not part of the package import roots); the shared schema's idempotent DDL
-(CREATE ... IF NOT EXISTS) is read from db/schema.sql only to set up
-pre-existing rows. No network access, no production code changes.
-
-Coverage:
-- first run creates exactly one tenant / property / role='manager' binding,
-  with UTC `created_at`, and never creates evidence / classification /
-  review / association rows (including when the database has no schema yet)
-- a rerun is a no-op: identical row counts and field values
-- a pre-existing binding for the demo pair with role='resident' makes the
-  run fail (exit 1) and leaves the role and all other data untouched
-- pre-existing tenant/property rows keep their custom fields (the seed
-  must never overwrite them), on both the creating run and reruns
+Existing fields and conflicting bindings must never be overwritten.
 """
-
 from __future__ import annotations
 
 import importlib.util
@@ -41,7 +25,8 @@ _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 TENANT_ID = "T-DEMO-01"
 PROPERTY_ID = "P-DEMO-01"
-TABLES = ("tenant", "property", "tenant_property")
+MANAGER_ID = "M-DEMO-01"
+TABLES = ("tenant", "property", "tenant_property", "manager", "manager_property")
 # The seed must never create any of these.
 EVIDENCE_TABLES = (
     "evidence_document",
@@ -134,7 +119,7 @@ def _assert_utc(value: str) -> None:
 
 
 def _assert_demo_binding(db_path: Path) -> tuple:
-    """The demo binding must exist with role='manager'; return its row."""
+    """The demo binding must exist with role='resident'; return its row."""
     conn = sqlite3.connect(str(db_path))
     try:
         row = conn.execute(
@@ -145,7 +130,13 @@ def _assert_demo_binding(db_path: Path) -> tuple:
     finally:
         conn.close()
     assert row is not None, "expected the demo binding to exist"
-    assert row[2] == "manager"
+    assert row[2] == "resident"
+    managers = _rows(db_path, "manager")
+    assert len(managers) == 1 and managers[0][0] == MANAGER_ID
+    _assert_utc(managers[0][2])
+    bindings = _rows(db_path, "manager_property")
+    assert len(bindings) == 1 and bindings[0][:2] == (MANAGER_ID, PROPERTY_ID)
+    _assert_utc(bindings[0][2])
     return row
 
 
@@ -227,11 +218,11 @@ def test_second_run_is_noop_and_rows_unchanged(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resident_binding_fails_and_leaves_data_untouched(db_path: Path) -> None:
+def test_conflicting_manager_role_fails_and_leaves_data_untouched(db_path: Path) -> None:
     _apply_schema(db_path)
     # The demo tenant/property/binding already exist, but the binding is
     # NOT a manager's: the seed must refuse to touch it.
-    _insert_tenant_property(db_path, TENANT_ID, PROPERTY_ID, PAST_UTC, role="resident")
+    _insert_tenant_property(db_path, TENANT_ID, PROPERTY_ID, PAST_UTC, role="manager")
     before = _snapshot(db_path)
 
     assert seed.main(["--db", str(db_path)]) == 1
@@ -239,7 +230,7 @@ def test_resident_binding_fails_and_leaves_data_untouched(db_path: Path) -> None
     after = _snapshot(db_path)
     assert after == before, "failed run must leave every row unchanged (rolled back)"
     (binding,) = _rows(db_path, "tenant_property")
-    assert binding[2] == "resident", "existing role must never be escalated to manager"
+    assert binding[2] == "manager", "existing role must never be escalated to manager"
     assert binding[3] == PAST_UTC
 
 
@@ -295,10 +286,11 @@ def test_existing_demo_rows_keep_custom_fields_on_create_run(db_path: Path) -> N
 
 
 def test_existing_manager_binding_reruns_keep_custom_fields(db_path: Path) -> None:
-    """The full demo triple already exists with role='manager': the seed
+    """The full demo triple already exists with role='resident': the seed
     must not duplicate or overwrite anything, across repeated runs."""
     _apply_schema(db_path)
-    _insert_tenant_property(db_path, TENANT_ID, PROPERTY_ID, PAST_UTC, role="manager")
+    _insert_tenant_property(db_path, TENANT_ID, PROPERTY_ID, PAST_UTC, role="resident")
+    assert seed.main(["--db", str(db_path)]) == 0
     before = _snapshot(db_path)
 
     assert seed.main(["--db", str(db_path)]) == 0
@@ -310,4 +302,18 @@ def test_existing_manager_binding_reruns_keep_custom_fields(db_path: Path) -> No
     assert _count(db_path, "property") == 1
     assert _count(db_path, "tenant_property") == 1
     assert _assert_demo_binding(db_path)[3] == PAST_UTC
+    _assert_no_evidence_rows(db_path)
+
+
+def test_existing_independent_manager_keeps_custom_fields(db_path: Path) -> None:
+    _apply_schema(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO manager VALUES (?, ?, ?)", (MANAGER_ID, "Custom manager", PAST_UTC))
+    assert seed.main(["--db", str(db_path)]) == 0
+    before = _snapshot(db_path)
+    assert seed.main(["--db", str(db_path)]) == 0
+    assert _snapshot(db_path) == before
+    assert _rows(db_path, "manager") == [(MANAGER_ID, "Custom manager", PAST_UTC)]
+    assert _count(db_path, "tenant") == 1
+    _assert_demo_binding(db_path)
     _assert_no_evidence_rows(db_path)

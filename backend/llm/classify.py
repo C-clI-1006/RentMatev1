@@ -47,7 +47,7 @@ CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
-_DEFAULT_TIMEOUT_S = 30.0
+_DEFAULT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_MODEL = "qwen"  # placeholder until the school proxy is confirmed
 
 
@@ -170,7 +170,7 @@ class QwenDocumentClassifier:
       LLM_BASE_URL   base URL of the proxy, e.g. https://.../v1
       LLM_API_KEY    API key
       LLM_MODEL      model name (default: placeholder "qwen")
-      LLM_TIMEOUT_S  per-request timeout in seconds (default 30)
+      LLM_TIMEOUT_SECONDS  per-request timeout in seconds (default 30)
 
     Any unavailability, timeout, malformed or out-of-vocabulary answer
     is a `ClassifyFailure` — the document then goes to manual review.
@@ -204,7 +204,7 @@ class QwenDocumentClassifier:
         self._api_key = (api_key if api_key is not None else os.environ.get("LLM_API_KEY", "")).strip()
         self._model = (model or os.environ.get("LLM_MODEL", "")).strip() or _DEFAULT_MODEL
         self._timeout_s = float(
-            timeout_s if timeout_s is not None else os.environ.get("LLM_TIMEOUT_S", _DEFAULT_TIMEOUT_S)
+            timeout_s if timeout_s is not None else os.environ.get("LLM_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS)
         )
 
     @property

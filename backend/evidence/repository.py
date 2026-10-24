@@ -22,10 +22,15 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from contracts.common import ManagerId, PropertyId
 from contracts.evidence import EvidenceDocument, EvidenceDocumentRef
+from permissions import (
+    MissingManagerIdentityError,
+    SQLiteManagerRepository,
+    require_manager_property_access,
+)
 from shared import new_id, utcnow
-
-_SCHEMA_FILE = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
+from shared.sqlite import apply_schema
 
 
 class EvidenceReviewRejectedError(ValueError):
@@ -95,8 +100,17 @@ class EvidenceRepository:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """Apply the shared schema (idempotent: CREATE ... IF NOT EXISTS)."""
-        self._conn.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
+        """Upgrade this connection to the current schema via the shared
+        migration chain (idempotent): the versioned migration steps run
+        BEFORE db/schema.sql, so a column added by a migration (e.g.
+        rent_record.due_date, v3) exists before any schema statement that
+        depends on it (e.g. CREATE INDEX idx_rent_due).
+
+        The row_factory / foreign-key PRAGMAs are already set by the
+        constructor (this module's cross-thread connection convention);
+        apply_schema only upgrades the schema itself.
+        """
+        apply_schema(self._conn)
         self._conn.commit()
 
     def close(self) -> None:
@@ -362,24 +376,74 @@ class EvidenceRepository:
                 """,
                 (document_id, tenant_id, property_id),
             ).fetchone()
-            if row is None:
-                return None
-            return EvidenceDocument(
-                document_id=row["document_id"],
-                tenant_id=row["tenant_id"],
-                property_id=row["property_id"],
-                original_filename=row["original_filename"],
-                file_type=row["file_type"],
-                size_bytes=row["size_bytes"],
-                storage_ref=row["storage_ref"],
-                upload_status=row["upload_status"],
-                classification=row["classification_status"],
-                association=row["association_status"],
-                uploaded_at=_parse_dt(row["uploaded_at"]),
-                updated_at=_parse_dt(row["updated_at"]),
-                **_review_flags_from_details(row["classification_details"]),
-                **self._latest_review(row["document_id"]),
-            )
+            return self._document_from_row(row)
+
+    def get_document_for_manager(
+        self,
+        document_id: str,
+        property_id: str,
+        manager_id: str | None,
+    ) -> EvidenceDocument | None:
+        """Manager-scoped single-document read.
+
+        The caller is a manager, not a tenant, so this read is NOT filtered
+        by any tenant_id from the request. It first asserts (default deny)
+        that ``manager_id`` is bound to ``property_id`` via
+        `require_manager_access`, then finds the document by
+        ``document_id`` + ``property_id`` only. The returned
+        `EvidenceDocument` `tenant_id` is taken from the row fetched from
+        the database, never from the request.
+
+        Returns None when the document does not belong to ``property_id``
+        — it is never looked up across other properties, and the None
+        result is indistinguishable from a missing document (no existence
+        leak).
+        """
+        with self._lock:
+            self.require_manager_access(manager_id, property_id)
+            row = self._conn.execute(
+                """
+                SELECT d.document_id, d.tenant_id, d.property_id,
+                       d.original_filename, d.file_type, d.size_bytes,
+                       d.storage_ref, d.upload_status,
+                       COALESCE(c.status, 'pending') AS classification_status,
+                       'unassociated' AS association_status,
+                       d.created_at AS uploaded_at, d.updated_at,
+                       c.details AS classification_details
+                FROM evidence_document d
+                LEFT JOIN evidence_classification c ON c.document_id = d.document_id
+                WHERE d.document_id = ? AND d.property_id = ?
+                """,
+                (document_id, property_id),
+            ).fetchone()
+            return self._document_from_row(row)
+
+    def _document_from_row(self, row: sqlite3.Row | None) -> EvidenceDocument | None:
+        """Map one joined evidence_document row onto the
+        `EvidenceDocument` model, or return None for an absent row.
+
+        Shared by `get_document` (tenant-scoped) and
+        `get_document_for_manager` (manager-scoped): `tenant_id` and every
+        other field are read from the fetched row, never from the request.
+        """
+        if row is None:
+            return None
+        return EvidenceDocument(
+            document_id=row["document_id"],
+            tenant_id=row["tenant_id"],
+            property_id=row["property_id"],
+            original_filename=row["original_filename"],
+            file_type=row["file_type"],
+            size_bytes=row["size_bytes"],
+            storage_ref=row["storage_ref"],
+            upload_status=row["upload_status"],
+            classification=row["classification_status"],
+            association=row["association_status"],
+            uploaded_at=_parse_dt(row["uploaded_at"]),
+            updated_at=_parse_dt(row["updated_at"]),
+            **_review_flags_from_details(row["classification_details"]),
+            **self._latest_review(row["document_id"]),
+        )
 
     def _latest_review(self, document_id: str) -> dict:
         """Latest EFFECTIVE human manager-review record for one document
@@ -453,19 +517,39 @@ class EvidenceRepository:
                 return None
             return path.read_bytes()
 
-    # -- prototype binding check (auth-owned table, read-only) ---------------
+    # -- binding checks (auth-owned tables, read-only) ----------------------
 
-    def has_manager_access(self, tenant_id: str, property_id: str) -> bool:
-        """Manager access to a property via the PROTOTYPE verified
-        tenant<->property binding (role='manager').
+    def has_tenant_access(self, tenant_id: str, property_id: str) -> bool:
+        """Tenant access to a property via the verified
+        tenant<->property binding (mainline maintenance rule: any
+        binding row counts, no role filter).
 
-        This is a scope check against stub binding data, NOT real
-        authorisation: the repo has no auth/session component yet.
+        Scope check against binding data, not a full authorisation.
         """
         with self._lock:
             row = self._conn.execute(
-                "SELECT 1 FROM tenant_property WHERE tenant_id = ? AND property_id = ? "
-                "AND role = 'manager' LIMIT 1",
+                "SELECT 1 FROM tenant_property WHERE tenant_id = ? AND property_id = ?",
                 (tenant_id, property_id),
             ).fetchone()
             return row is not None
+
+    def require_manager_access(self, manager_id: str | None, property_id: str) -> None:
+        """Assert ``manager_id`` is bound to ``property_id``.
+
+        Delegates to the permissions service (default deny) using THIS
+        repository's own connection, so the check sees the same
+        transactional state. Raises ``MissingManagerIdentityError``
+        when the identity is absent and ``ManagerAccessDeniedError``
+        on any denial.
+        """
+        if manager_id is None or manager_id == "":
+            raise MissingManagerIdentityError(
+                "manager identity is missing; resolve it server-side "
+                "before the property access check"
+            )
+        with self._lock:
+            require_manager_property_access(
+                ManagerId(manager_id),
+                PropertyId(property_id),
+                SQLiteManagerRepository(self._conn),
+            )

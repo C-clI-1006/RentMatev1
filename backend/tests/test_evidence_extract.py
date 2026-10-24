@@ -39,6 +39,7 @@ assert its content, and the module under test never interprets it.
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 from pathlib import Path
 
@@ -50,21 +51,45 @@ from contracts.evidence import ManualReviewCode
 from evidence.extract import extract_pdf_text
 from llm.classify import StubDocumentClassifier
 from main import create_app
+from llm.classify import StubDocumentClassifier
 
-# Prototype identity (TEST-ONLY headers, not real authentication)
+# Prototype identity (TEST-ONLY bearer tokens, not real authentication):
+# the tenant_id / property_id come ONLY from the server-side
+# RENTMATE_AUTH_TOKENS map, never from the request.
 TENANT_1 = "T1"
 PROP_1 = "P1"
 TENANT_2 = "T2"
 PROP_2 = "P2"
 
-HEADERS_T1_P1 = {
-    "X-Prototype-Tenant-Id": TENANT_1,
-    "X-Prototype-Property-Id": PROP_1,
-}
-HEADERS_T2_P2 = {
-    "X-Prototype-Tenant-Id": TENANT_2,
-    "X-Prototype-Property-Id": PROP_2,
-}
+# Fictitious session tokens (TEST-ONLY, not real credentials).
+TOKEN_T1_P1 = "ev-extract-t1-p1-fixture-token"
+TOKEN_T2_P2 = "ev-extract-t2-p2-fixture-token"
+
+
+def _auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+HEADERS_T1_P1 = _auth_headers(TOKEN_T1_P1)
+HEADERS_T2_P2 = _auth_headers(TOKEN_T2_P2)
+
+
+def _seed_auth_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Map the fictitious test tokens onto the seeded tenants/properties.
+
+    `get_auth` reads RENTMATE_AUTH_TOKENS per request (never monkeypatched:
+    the real dependency stays in place), so the mapping is applied as an
+    environment variable via monkeypatch and reverted automatically.
+    """
+    monkeypatch.setenv(
+        "RENTMATE_AUTH_TOKENS",
+        json.dumps(
+            {
+                TOKEN_T1_P1: {"tenant_id": TENANT_1, "property_id": PROP_1},
+                TOKEN_T2_P2: {"tenant_id": TENANT_2, "property_id": PROP_2},
+            }
+        ),
+    )
 
 
 def _seed_bindings(conn: sqlite3.Connection) -> None:
@@ -77,15 +102,22 @@ def _seed_bindings(conn: sqlite3.Connection) -> None:
         "INSERT INTO property (property_id, name, address, created_at) VALUES (?, ?, ?, ?)",
         [(PROP_1, "Property One", "addr1", now), (PROP_2, "Property Two", "addr2", now)],
     )
-    conn.executemany(
-        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) VALUES (?, ?, 'manager', ?)",
-        [(TENANT_1, PROP_1, now), (TENANT_2, PROP_2, now)],
+    # T1 (the normal-upload tenant) holds a `resident` binding.
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT_1, PROP_1, now),
+    )
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'manager', ?)",
+        (TENANT_2, PROP_2, now),
     )
     conn.commit()
 
 
 @pytest.fixture()
-def client(tmp_path: Path):
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = str(tmp_path / "evidence_extract.db")
     storage_root = str(tmp_path / "evidence_storage")
 
@@ -100,7 +132,11 @@ def client(tmp_path: Path):
     finally:
         conn.close()
 
-    app = create_app(db_path, storage_root)
+    # Map the fictitious tokens (server-side RENTMATE_AUTH_TOKENS) onto the
+    # seeded tenants/properties for the duration of the fixture.
+    _seed_auth_tokens(monkeypatch)
+
+    app = create_app(db_path, storage_root, classifier=StubDocumentClassifier())
     # UC6: the service advances classification synchronously on upload.
     # These extraction tests are about the extraction path (READ-ONLY),
     # so they pin a DETERMINISTIC, LABELLED classifier (the stub) by

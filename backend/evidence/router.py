@@ -6,17 +6,17 @@ top of `EvidenceService`.
 IDENTITY — PROTOTYPE, TEST-ONLY, NOT REAL AUTH
 ----------------------------------------------
 The repo has no real auth/session component. In this prototype the
-identity is read from request headers:
+bearer token is matched server-side against the JSON token map in the
+``RENTMATE_AUTH_TOKENS`` env var (same pattern as the maintenance /
+review routers) and the identity fields come ONLY from that map:
 
-    X-Prototype-Tenant-Id     (required)
-    X-Prototype-Property-Id   (required)
-    X-Prototype-Manager-Id    (optional)
+    tenant_id     (required in the map entry)
+    property_id   (required in the map entry)
+    manager_id    (optional in the map entry)
 
-Any client can send any values. The `tenant_property` binding check
-(Has manager access, role='manager') only verifies that the claimed
-binding exists in the stub table; it is a scope check, NOT real
-authorisation. These headers must never be presented as, or relied
-on as, real authentication.
+No client-supplied identity headers are read. This replaces the
+identity resolution only; scope/role authorisation (permissions
+service) is layered on top separately. Not real authentication.
 
 Status mapping
 --------------
@@ -33,17 +33,21 @@ Status mapping
   machine outcome is a 409 with stable code `review_rejected` (no internal
   details). Request-model validation failures stay 422 (FastAPI default).
 
-  PROTOTYPE NOTE: the review reviewer is `auth.tenant_id` from the
-  header-based prototype identity (TEST-ONLY, not real authentication);
+  The review reviewer is the token-mapped `manager_id`, verified through
+  manager_property;
   the command never carries a `manager_id` field.
 """
 
 from __future__ import annotations
 
+import hmac
+import json
+import os
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from contracts.evidence import (
     EvidenceReviewCommand,
@@ -58,6 +62,7 @@ from .service import EvidenceScopeError, EvidenceService
 from .upload import MAX_FILE_BYTES
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
+bearer = HTTPBearer()
 
 # Content types for the allowlisted file types (see upload.ALLOWED_EXTENSIONS).
 # An explicit map keeps downloads deterministic: on Windows,
@@ -75,30 +80,40 @@ _MEDIA_TYPES: dict[str, str] = {
     "txt": "text/plain",
 }
 
-_MISSING_HEADERS = (
-    "Missing prototype identity headers. This endpoint uses PROTOTYPE "
-    "header identity for TESTING ONLY — it is not real authentication. "
-    "Send X-Prototype-Tenant-Id and X-Prototype-Property-Id."
-)
-
-
 def get_evidence_service(request: Request) -> EvidenceService:
     """Wired in main.create_app (thin wiring; see main.py)."""
     return request.app.state.evidence_service
 
 
-def prototype_auth_context(
-    tenant_id: Annotated[str | None, Header(alias="X-Prototype-Tenant-Id")] = None,
-    property_id: Annotated[str | None, Header(alias="X-Prototype-Property-Id")] = None,
-    manager_id: Annotated[str | None, Header(alias="X-Prototype-Manager-Id")] = None,
+def get_auth(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer)],
 ) -> AuthContext:
-    """Resolve the PROTOTYPE auth context from headers.
+    """Resolve the PROTOTYPE auth context from the bearer token.
 
-    TEST-ONLY: any caller may set these headers. See module docstring.
+    TEST-ONLY: the token is matched server-side against the JSON token
+    map in ``RENTMATE_AUTH_TOKENS``; the identity fields come only from
+    that map, never from the request. Same matching and error handling
+    as the maintenance / review routers.
     """
-    if not tenant_id or not property_id:
-        raise HTTPException(status_code=400, detail=_MISSING_HEADERS)
-    return AuthContext(tenant_id=tenant_id, property_id=property_id, manager_id=manager_id)
+    try:
+        accounts = json.loads(os.getenv("RENTMATE_AUTH_TOKENS", "{}"))
+        account = next(
+            (
+                value
+                for token, value in accounts.items()
+                if hmac.compare_digest(token, credentials.credentials)
+            ),
+            None,
+        )
+        if not account:
+            raise ValueError()
+        return AuthContext(
+            tenant_id=account["tenant_id"],
+            property_id=account["property_id"],
+            manager_id=account.get("manager_id"),
+        )
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HTTPException(401, "Invalid or unconfigured prototype session")
 
 
 def _scope_error(exc: EvidenceScopeError) -> HTTPException:
@@ -113,7 +128,7 @@ def _scope_error(exc: EvidenceScopeError) -> HTTPException:
 async def upload_document(
     file: Annotated[UploadFile, File()],
     property_id: Annotated[str, Form()],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> dict:
     """Upload one original document (multipart/form-data).
@@ -144,7 +159,7 @@ async def upload_document(
 @router.get("/documents")
 def list_documents(
     property_id: Annotated[str, Query()],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> list[dict]:
     """Property-scoped list of stored documents (newest first)."""
@@ -159,7 +174,7 @@ def list_documents(
 def get_document(
     document_id: str,
     property_id: Annotated[str, Query()],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> dict:
     """Property-scoped single-document read (403 out of scope, 404 absent)."""
@@ -174,7 +189,7 @@ def get_document(
 def download_document(
     document_id: str,
     property_id: Annotated[str, Query()],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> Response:
     """Property-scoped original-file download (streams the stored bytes)."""
@@ -197,7 +212,7 @@ def download_document(
 def extract_document_text(
     document_id: str,
     property_id: Annotated[str, Query()],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> dict:
     """Property-scoped PDF text extraction (READ-ONLY).
@@ -224,13 +239,13 @@ def review_document(
         Body(description="Review command: `confirm_suggested` or "
         "`select_category` (discriminated by `status`)."),
     ],
-    auth: Annotated[AuthContext, Depends(prototype_auth_context)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ) -> dict:
     """Settle one manager review of a document's classification outcome.
 
     200 body: the settled `EvidenceReviewResult` (`reviewed_by` is the
-    prototype tenant from the header identity — TEST-ONLY, never taken
+    verified manager_id from the server-side Bearer identity, never taken
     from the command; the command has no `manager_id` field).
 
     Errors: scope failures map like the reads (403 `forbidden` / 404

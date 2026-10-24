@@ -1,41 +1,7 @@
-"""Real HTTP tests for the evidence manager-review endpoint.
+"""HTTP review regressions: real Bearer authentication and manager_property.
 
-Runs against a TEMP database + TEMP storage directory built through
-`main.create_app` — the same wiring a real deployment uses, with the
-identity coming from the PROTOTYPE headers (TEST-ONLY: any client can
-send any header; nothing here is real authentication). The service is
-never called directly; every request goes through `TestClient` over the
-`/api/evidence/reviews` route.
-
-Coverage (this increment):
-- select_category over a `failed` machine outcome (review required):
-  200 with `final_category == "invoice"` (the manager's choice) and
-  `reviewed_by` == the prototype tenant from the headers (never a
-  command field — the command carries no `manager_id`). The persisted
-  review record (action / final_category / reviewed_by / reviewed_at)
-  is re-read through a SEPARATE sqlite3 connection, so the tests verify
-  the database file itself, not the service's in-memory view.
-- confirm_suggested over a `classified` machine outcome with a valid
-  suggestion: 200 settling the machine's own category, review record
-  persisted (independent connection).
-- confirm_suggested over a `failed` machine outcome (no confirmable
-  suggestion): 409 with stable code `review_rejected`; the response is
-  client-safe (no stack traces / SQL), NO review row is written, and
-  the `review_required` flag stays set.
-- Scope failures: a `property_id` that does not match the auth
-  context's property -> 403 `forbidden`; a tenant/property with no
-  manager binding in `tenant_property` -> 403 `forbidden`; an
-  in-scope but never-seeded document_id -> 404 `not_found`. Every
-  failure leaves the `evidence_review` table untouched and the
-  seeded classification row byte-for-byte unchanged (independent
-  connection).
-- `select_category` with `category="unknown"` (the enum has no
-  `unknown` on purpose) and with the `category` field missing: 422
-  (request-model validation, FastAPI default); nothing is written.
-
-No network, no real auth.
+Independent temporary DB checks retain machine outcomes and review history.
 """
-
 from __future__ import annotations
 
 import json
@@ -47,11 +13,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import create_app
+from llm.classify import StubDocumentClassifier
 
 # Prototype identity (TEST-ONLY headers, not real authentication).
 TENANT_1 = "T1"
 PROP_1 = "P1"
-MANAGER_9 = "mgr-9"  # sent on the header, but must NOT become reviewed_by
+MANAGER_9 = "mgr-9"  # verified through manager_property; becomes reviewed_by
 
 NOW = "2026-10-23T00:00:00+00:00"
 DOC_1 = "doc-ev-rtr-select-1"
@@ -71,11 +38,9 @@ CLASSIFIED_DETAILS_JSON = json.dumps(
     {"rationale": "lease agreement text detected", "review_required": True}
 )
 
-HEADERS_T1_P1 = {
-    "X-Prototype-Tenant-Id": TENANT_1,
-    "X-Prototype-Property-Id": PROP_1,
-    "X-Prototype-Manager-Id": MANAGER_9,
-}
+HEADERS_T1_P1 = {"Authorization": "Bearer test-review-manager"}
+TENANT_HEADERS = {"Authorization": "Bearer test-review-tenant"}
+
 
 # The machine's FAILED outcome awaiting manual review: a `failed`
 # status with a NULL category and review_required=True in details.
@@ -100,9 +65,12 @@ def _seed_bindings(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
-        "VALUES (?, ?, 'manager', ?)",
+        "VALUES (?, ?, 'resident', ?)",
         (TENANT_1, PROP_1, NOW),
     )
+    conn.execute("INSERT INTO manager VALUES (?, ?, ?)", (MANAGER_9, "Independent Manager", NOW))
+    conn.execute("INSERT INTO manager_property VALUES (?, ?, ?)", (MANAGER_9, PROP_1, NOW))
+    conn.execute("INSERT INTO manager VALUES (?, ?, ?)", ("unbound-manager", "Unbound Manager", NOW))
     conn.commit()
 
 
@@ -163,11 +131,16 @@ def _seed_unbound_tenant_property(conn: sqlite3.Connection) -> None:
 
 
 @pytest.fixture()
-def client(tmp_path: Path):
+def client(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("RENTMATE_AUTH_TOKENS", json.dumps({
+        "test-review-manager": {"tenant_id": "manager-session", "property_id": PROP_1, "manager_id": MANAGER_9},
+        "test-review-tenant": {"tenant_id": TENANT_1, "property_id": PROP_1},
+        "test-review-unbound": {"tenant_id": TENANT_2, "property_id": PROP_2, "manager_id": "unbound-manager"},
+    }))
     db_path = str(tmp_path / "evidence_review_router.db")
     storage_root = str(tmp_path / "evidence_storage")
 
-    # Seed prototype bindings + the review docs BEFORE the app is built
+    # Seed verified bindings + the review docs BEFORE the app is built
     # so the schema file is applied exactly once (at first use).
     conn = sqlite3.connect(db_path)
     try:
@@ -182,7 +155,7 @@ def client(tmp_path: Path):
     finally:
         conn.close()
 
-    app = create_app(db_path, storage_root)
+    app = create_app(db_path, storage_root, classifier=StubDocumentClassifier())
     with TestClient(app) as c:
         yield c, db_path
 
@@ -191,7 +164,7 @@ def test_select_category_over_failed_settles_chosen_category(client):
     # The manager picks `invoice` for a document whose machine outcome
     # FAILED (pdf_no_text, review required): the chosen category is
     # settled as the review's final category, recorded under the
-    # prototype tenant (never the unverified header manager_id).
+    # verified manager (never the unverified header manager_id).
     c, db_path = client
     r = c.post(
         "/api/evidence/reviews",
@@ -206,12 +179,11 @@ def test_select_category_over_failed_settles_chosen_category(client):
 
     assert r.status_code == 200
     body = r.json()
-    # The manager's chosen category, under the tenant — not the
-    # unverified manager_id carried on the header.
+    # The chosen category is recorded under the verified manager.
     assert body["document_id"] == DOC_1
     assert body["final_category"] == "invoice"
-    assert body["reviewed_by"] == TENANT_1
-    assert body["reviewed_by"] != MANAGER_9
+    assert body["reviewed_by"] == MANAGER_9
+    assert body["reviewed_by"] != TENANT_1
     assert body["reviewed_at"]  # generated by the backend, not the caller
 
     # Independent connection: the review record is REALLY persisted
@@ -227,7 +199,7 @@ def test_select_category_over_failed_settles_chosen_category(client):
         assert len(rev) == 1
         assert rev[0][1] == "select_category"
         assert rev[0][2] == "invoice"
-        assert rev[0][3] == TENANT_1
+        assert rev[0][3] == MANAGER_9
         assert datetime.fromisoformat(rev[0][4]) == datetime.fromisoformat(body["reviewed_at"])
 
         # The machine's FAILED outcome columns are NOT overwritten with
@@ -275,7 +247,7 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
     assert r1.status_code == 200
     body1 = r1.json()
     assert body1["final_category"] == "invoice"
-    assert body1["reviewed_by"] == TENANT_1
+    assert body1["reviewed_by"] == MANAGER_9
 
     r2 = c.post(
         "/api/evidence/reviews",
@@ -291,7 +263,7 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
     body2 = r2.json()
     assert body2["document_id"] == DOC_1
     assert body2["final_category"] == "inspection_record"
-    assert body2["reviewed_by"] == TENANT_1
+    assert body2["reviewed_by"] == MANAGER_9
     assert body2["reviewed_at"]  # generated by the backend, not the caller
 
     # list: the document appears EXACTLY once, carrying the LATEST
@@ -300,7 +272,7 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
     r = c.get(
         "/api/evidence/documents",
         params={"property_id": PROP_1},
-        headers=HEADERS_T1_P1,
+        headers=TENANT_HEADERS,
     )
     assert r.status_code == 200
     refs = [ref for ref in r.json() if ref["document_id"] == DOC_1]
@@ -315,7 +287,7 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
     r = c.get(
         f"/api/evidence/documents/{DOC_1}",
         params={"property_id": PROP_1},
-        headers=HEADERS_T1_P1,
+        headers=TENANT_HEADERS,
     )
     assert r.status_code == 200
     doc = r.json()
@@ -340,10 +312,10 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
         assert len(rows) == 2
         assert rows[0][0] == "select_category"
         assert rows[0][1] == "invoice"
-        assert rows[0][2] == TENANT_1
+        assert rows[0][2] == MANAGER_9
         assert rows[1][0] == "select_category"
         assert rows[1][1] == "inspection_record"
-        assert rows[1][2] == TENANT_1
+        assert rows[1][2] == MANAGER_9
         assert datetime.fromisoformat(rows[1][3]) == datetime.fromisoformat(body2["reviewed_at"])
 
         row = check.execute(
@@ -369,7 +341,7 @@ def test_select_category_twice_keeps_history_and_latest_wins(client):
 def test_confirm_suggested_settles_machine_category(client):
     # The machine settled a valid suggestion (classified /
     # lease_document, review required): confirm_suggested settles the
-    # machine's OWN category, recorded under the prototype tenant.
+    # machine's OWN category, recorded under the verified manager.
     c, db_path = client
     r = c.post(
         "/api/evidence/reviews",
@@ -383,12 +355,11 @@ def test_confirm_suggested_settles_machine_category(client):
 
     assert r.status_code == 200
     body = r.json()
-    # Settled to the machine's own suggested category, under the
-    # tenant — not the unverified manager_id carried on the header.
+    # The machine's suggested category is recorded under the manager.
     assert body["document_id"] == DOC_2
     assert body["final_category"] == MACHINE_CATEGORY
-    assert body["reviewed_by"] == TENANT_1
-    assert body["reviewed_by"] != MANAGER_9
+    assert body["reviewed_by"] == MANAGER_9
+    assert body["reviewed_by"] != TENANT_1
     assert body["reviewed_at"]  # generated by the backend, not the caller
 
     # Independent connection: the review record is REALLY persisted
@@ -404,7 +375,7 @@ def test_confirm_suggested_settles_machine_category(client):
         assert len(rev) == 1
         assert rev[0][1] == "confirm_suggested"
         assert rev[0][2] == MACHINE_CATEGORY
-        assert rev[0][3] == TENANT_1
+        assert rev[0][3] == MANAGER_9
         assert datetime.fromisoformat(rev[0][4]) == datetime.fromisoformat(body["reviewed_at"])
 
         # The details flag was cleared; the machine's own outcome
@@ -540,15 +511,11 @@ def test_review_property_mismatch_is_403_forbidden(client):
 
 def test_review_without_manager_binding_is_403_forbidden(client):
     # Tenant T2 / property P2 exist in the tenant/property tables but
-    # have NO `tenant_property` manager binding: 403 `forbidden`.
+    # have NO `manager_property` binding: 403 `forbidden`.
     c, db_path = client
     r = c.post(
         "/api/evidence/reviews",
-        headers={
-            "X-Prototype-Tenant-Id": TENANT_2,
-            "X-Prototype-Property-Id": PROP_2,
-            "X-Prototype-Manager-Id": MANAGER_9,
-        },
+        headers={"Authorization": "Bearer test-review-unbound"},
         json={
             "status": "confirm_suggested",
             "document_id": DOC_1,
@@ -691,3 +658,53 @@ def test_review_with_extra_manager_id_field_is_422(client):
         _assert_doc3_classification_unchanged(check)
     finally:
         check.close()
+
+
+@pytest.mark.parametrize("headers, expected", [
+    ({"Authorization": "Bearer unknown-test-token"}, 401),
+    (TENANT_HEADERS, 403),
+    ({**TENANT_HEADERS, "X-Prototype-Manager-Id": MANAGER_9,
+      "X-Prototype-Tenant-Id": "manager-session", "X-Prototype-Property-Id": PROP_1}, 403),
+])
+def test_review_identity_cannot_be_spoofed(client, headers, expected):
+    c, db_path = client
+    response = c.post("/api/evidence/reviews", headers=headers, json={
+        "status": "select_category", "document_id": DOC_3,
+        "property_id": PROP_1, "category": "invoice",
+    })
+    assert response.status_code == expected
+    with sqlite3.connect(db_path) as check:
+        _assert_review_table_empty(check)
+        _assert_doc3_classification_unchanged(check)
+
+
+def test_manager_headers_cannot_replace_verified_reviewer(client):
+    c, db_path = client
+    response = c.post("/api/evidence/reviews", headers={
+        **HEADERS_T1_P1, "X-Prototype-Manager-Id": "forged-manager",
+        "X-Prototype-Tenant-Id": TENANT_2, "X-Prototype-Property-Id": PROP_2,
+    }, json={"status": "select_category", "document_id": DOC_3,
+             "property_id": PROP_1, "category": "invoice"})
+    assert response.status_code == 200
+    assert response.json()["reviewed_by"] == MANAGER_9
+    with sqlite3.connect(db_path) as check:
+        assert check.execute("SELECT reviewed_by FROM evidence_review").fetchone() == (MANAGER_9,)
+
+
+@pytest.mark.parametrize("document_id", [DOC_1, DOC_MISSING])
+def test_other_property_document_is_indistinguishable_from_missing(client, monkeypatch, document_id):
+    c, db_path = client
+    with sqlite3.connect(db_path) as check:
+        check.execute("INSERT INTO manager_property VALUES (?, ?, ?)", (MANAGER_9, PROP_2, NOW))
+    monkeypatch.setenv("RENTMATE_AUTH_TOKENS", json.dumps({
+        "test-other-property": {"tenant_id": "manager-session", "property_id": PROP_2,
+                                "manager_id": MANAGER_9},
+    }))
+    response = c.post("/api/evidence/reviews", headers={"Authorization": "Bearer test-other-property"},
+                      json={"status": "select_category", "document_id": document_id,
+                            "property_id": PROP_2, "category": "invoice"})
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "not_found"
+    with sqlite3.connect(db_path) as check:
+        _assert_review_table_empty(check)
+        _assert_doc3_classification_unchanged(check)

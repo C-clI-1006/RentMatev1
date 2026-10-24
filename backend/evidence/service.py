@@ -9,13 +9,15 @@ failure persists as `failed` — the upload itself always stays
 `SAVED`/`accepted`. Association stays `unassociated` (separate state
 machines).
 
-AUTH NOTE (important, by design): the repo has NO real auth/session
-component yet. Identity arrives only via `shared.AuthContext`
-(tenant_id / property_id / manager_id), resolved by the router from
-prototype headers. The manager-access check here is verified against
-the PROTOTYPE `tenant_property` binding table (role='manager'). It is
-a scope check, NOT real authorisation — until a real auth component
-lands, no access guarantee should be claimed.
+AUTH NOTE (important, by design): identity arrives only via
+`shared.AuthContext` (tenant_id / property_id / manager_id), resolved
+server-side by the router from the bearer-token mapping — never from
+request bodies, query params or custom headers. Tenant operations
+(upload / list / get / download / text) require a verified
+`tenant_property` binding; manager review requires a verified
+`manager_property` binding through the permissions service (default
+deny, no tenant fallback). A denied check never degrades to a
+tenant-scope success.
 
 Failure cleanup: if the file write fails, any partial file is removed
 and nothing reaches the DB; if the DB write fails (transaction rolled
@@ -56,6 +58,8 @@ from contracts.evidence import (
     AssociationStatus,
     UploadStatus,
 )
+
+from permissions import ManagerAccessDeniedError, MissingManagerIdentityError
 
 from .extract import extract_pdf_text
 from .repository import EvidenceRepository, EvidenceReviewRejectedError
@@ -116,20 +120,42 @@ class EvidenceService:
 
     def _check_scope(self, property_id: str, auth: AuthContext) -> None:
         """Verify the requested property is the auth context's property
-        and that manager access is verified for it (prototype binding)."""
+        and that the TENANT's access to it is verified
+        (`tenant_property` binding). Tenant upload / list / get /
+        download / text use this check; no manager binding is
+        required."""
         if property_id != auth.property_id:
             raise EvidenceScopeError(
                 "forbidden",
                 "The requested property is not the property bound to the "
                 "auth context.",
             )
-        if not self._repo.has_manager_access(auth.tenant_id, auth.property_id):
+        if not self._repo.has_tenant_access(auth.tenant_id, auth.property_id):
             raise EvidenceScopeError(
                 "forbidden",
-                "Manager access to this property is not verified. (Prototype "
-                "note: no real auth component exists yet; this is a scope "
-                "check against stub binding data, not real authorisation.)",
+                "This identity is not authorised for this property.",
             )
+
+    def _check_manager_scope(self, property_id: str, auth: AuthContext) -> str:
+        """Manager-only entry points: the server-side identity MUST carry
+        a `manager_id` (a tenant identity is a denial, not a fallback)
+        and the `manager_id` + `property_id` binding must be verified
+        through the permissions service (default deny). Returns the
+        verified `manager_id` for `reviewed_by`."""
+        if property_id != auth.property_id:
+            raise EvidenceScopeError(
+                "forbidden",
+                "The requested property is not the property bound to the "
+                "auth context.",
+            )
+        try:
+            self._repo.require_manager_access(auth.manager_id, auth.property_id)
+        except (MissingManagerIdentityError, ManagerAccessDeniedError):
+            raise EvidenceScopeError(
+                "forbidden",
+                "This identity is not authorised for this property.",
+            ) from None
+        return auth.manager_id
 
     # -- upload ----------------------------------------------------------------
 
@@ -419,11 +445,10 @@ class EvidenceService:
         human final category from a prior review is NEVER treated as the
         machine's suggestion.
 
-        Identity (PROTOTYPE NOTE): there is no real auth component yet, so
-        `reviewed_by` is `auth.tenant_id` — the tenant that already passed
-        the prototype manager-binding check in `_check_scope`. The
-        unverified `auth.manager_id` is deliberately NOT used. This is a
-        scope check, not real authorisation.
+        Identity: manager review is manager-only — the server-side
+        identity must carry a `manager_id` verified against
+        `manager_property` (default deny, no tenant fallback).
+        `reviewed_by` is that verified `manager_id`, never `tenant_id`.
 
         The reviewer is never taken from the command; `save_review`
         appends the history and returns the settled record (a duplicate
@@ -431,16 +456,24 @@ class EvidenceService:
         `reviewed_at`). The machine's own result columns are untouched —
         `save_review` only flips the details `review_required` flag.
         """
-        self._check_scope(cmd.property_id, auth)
-        doc = self._repo.get_document(cmd.document_id, auth.tenant_id, auth.property_id)
+        manager_id = self._check_manager_scope(cmd.property_id, auth)
+        # Manager read: not filtered by the manager's tenant_id. The repo
+        # re-asserts manager_property access (already verified above) and
+        # scopes only by document_id + property_id, returning None when the
+        # document is not under this property.
+        doc = self._repo.get_document_for_manager(
+            cmd.document_id, cmd.property_id, manager_id
+        )
         if doc is None:
             raise EvidenceScopeError(
                 "not_found", f"No document '{cmd.document_id}' in scope."
             )
 
         if isinstance(cmd, ReviewConfirmSuggested):
+            # Scope by the document's OWN tenant/property (from the DB row),
+            # never the manager's auth.tenant_id.
             machine = self._repo.get_classification(
-                cmd.document_id, auth.tenant_id, auth.property_id
+                cmd.document_id, doc.tenant_id, doc.property_id
             )
             if machine is None:
                 raise EvidenceReviewRejectedError(
@@ -460,13 +493,15 @@ class EvidenceService:
         else:  # ReviewSelectCategory
             category = cmd.category
 
-        # PROTOTYPE identity (see docstring): the verified tenant from the
-        # binding-checked auth context, never the unverified manager_id.
-        reviewed_by = auth.tenant_id
+        # Verified manager identity (see docstring): the manager_id that
+        # passed `_check_manager_scope`, never the tenant_id.
+        reviewed_by = manager_id
+        # Scope the write by the document's OWN tenant/property (from the
+        # DB row), never the manager's auth.tenant_id.
         _, rec = self._repo.save_review(
             cmd.document_id,
-            auth.tenant_id,
-            auth.property_id,
+            doc.tenant_id,
+            doc.property_id,
             cmd.status,
             category.value,
             reviewed_by,

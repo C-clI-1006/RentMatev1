@@ -36,21 +36,52 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import create_app
+from llm.classify import StubDocumentClassifier
 from test_evidence_review_flags import build_text_pdf
 
+# Prototype identity (TEST-ONLY bearer tokens, not real authentication):
+# the tenant_id / property_id come ONLY from the server-side
+# RENTMATE_AUTH_TOKENS map, never from the request.
 TENANT_1 = "T1"
 PROP_1 = "P1"
 TENANT_2 = "T2"
 PROP_2 = "P2"
 
-HEADERS_T1_P1 = {
-    "X-Prototype-Tenant-Id": TENANT_1,
-    "X-Prototype-Property-Id": PROP_1,
-}
-HEADERS_T2_P2 = {
-    "X-Prototype-Tenant-Id": TENANT_2,
-    "X-Prototype-Property-Id": PROP_2,
-}
+# Fictitious session tokens (TEST-ONLY, not real credentials).
+TOKEN_T1_P1 = "ev-rfq-t1-p1-fixture-token"
+# Same tenant T1 scoped to the OTHER property P2: an independent token whose
+# scope matches its own (T1, P2) binding — never switched via request headers.
+TOKEN_T1_P2 = "ev-rfq-t1-p2-fixture-token"
+TOKEN_T2_P2 = "ev-rfq-t2-p2-fixture-token"
+
+
+def _auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+HEADERS_T1_P1 = _auth_headers(TOKEN_T1_P1)
+HEADERS_T1_P2 = _auth_headers(TOKEN_T1_P2)  # same tenant T1, other property P2
+HEADERS_T2_P2 = _auth_headers(TOKEN_T2_P2)
+
+
+def _seed_auth_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Map the fictitious test tokens onto the seeded tenants/properties.
+
+    `get_auth` reads RENTMATE_AUTH_TOKENS per request (never monkeypatched:
+    the real dependency stays in place), so the mapping is applied as an
+    environment variable via monkeypatch and reverted automatically.
+    """
+    monkeypatch.setenv(
+        "RENTMATE_AUTH_TOKENS",
+        json.dumps(
+            {
+                TOKEN_T1_P1: {"tenant_id": TENANT_1, "property_id": PROP_1},
+                TOKEN_T1_P2: {"tenant_id": TENANT_1, "property_id": PROP_2},
+                TOKEN_T2_P2: {"tenant_id": TENANT_2, "property_id": PROP_2},
+            }
+        ),
+    )
+
 
 # Internal markers that must NEVER reach an HTTP response: they live in
 # the persisted `details` (a leaked `details` would drag these out).
@@ -86,10 +117,24 @@ def _seed_bindings(conn: sqlite3.Connection) -> None:
         "INSERT INTO property (property_id, name, address, created_at) VALUES (?, ?, ?, ?)",
         [(PROP_1, "Property One", "addr1", now), (PROP_2, "Property Two", "addr2", now)],
     )
-    conn.executemany(
+    # T1 (the normal-read tenant) holds `resident` bindings on BOTH
+    # properties: P1 for the normal scope, P2 for the "same tenant, other
+    # property" case (its token is scoped to P2). T2 keeps a `resident`
+    # binding on P2 only.
+    conn.execute(
         "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
-        "VALUES (?, ?, 'manager', ?)",
-        [(TENANT_1, PROP_1, now), (TENANT_2, PROP_2, now)],
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT_1, PROP_1, now),
+    )
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT_1, PROP_2, now),
+    )
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id, property_id, role, created_at) "
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT_2, PROP_2, now),
     )
     conn.commit()
 
@@ -122,7 +167,7 @@ def _seed_legacy_documents(conn: sqlite3.Connection) -> None:
 
 
 @pytest.fixture()
-def client(tmp_path: Path):
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = str(tmp_path / "review_query.db")
     storage_root = str(tmp_path / "review_storage")
 
@@ -136,7 +181,11 @@ def client(tmp_path: Path):
     finally:
         conn.close()
 
-    app = create_app(db_path, storage_root)
+    # Map the fictitious tokens (server-side RENTMATE_AUTH_TOKENS) onto the
+    # seeded tenants/properties for the duration of the fixture.
+    _seed_auth_tokens(monkeypatch)
+
+    app = create_app(db_path, storage_root, classifier=StubDocumentClassifier())
     with TestClient(app) as c:
         yield c
 
@@ -284,14 +333,23 @@ def test_legacy_rows_return_none_without_errors(client, document_id, expected):
     )
 
 
-def test_live_upload_details_are_not_leaked(client):
-    """An upload through the app's DEFAULT classifier (unconfigured live
-    adapter, offline) fails closed to `failed` + `review_required: True`
+def test_live_upload_details_are_not_leaked(client, monkeypatch):
+    """A test classifier simulating an unconfigured adapter fails closed
+    to `failed` + `review_required: True`
     with `code: "configuration"`. The HTTP responses may surface only
     the three review fields — never the whole persisted details: after
     the DB re-read we also plant a dedicated internal marker into the
     stored details (keeping the original fields) and verify neither the
     `internal` key nor the marker can leak through list/get."""
+    from llm.classify import ClassifyFailure
+
+    class ConfigurationFailureClassifier:
+        source = "stub"
+
+        def classify(self, **kwargs):
+            return ClassifyFailure(code="configuration", detail="Test-only configuration failure")
+
+    monkeypatch.setattr(client.app.state.evidence_service, "_classifier", ConfigurationFailureClassifier())
     content = build_text_pdf(["lease agreement between landlord and tenant"])
     doc = _upload_pdf(client, "live.pdf", content)
     assert doc["classification"] == "failed"  # unconfigured live adapter, offline
@@ -428,11 +486,13 @@ def test_cross_property_list_get_forbidden_and_no_leak(client):
 
 
 def test_same_tenant_other_property_cannot_read_p1(client):
-    """Even a valid manager whose property differs from the requested
-    one (T2 on P2 asking for P1) is forbidden — the scope check is on
-    the auth context, not just the tenant."""
+    """Even a valid resident of tenant T1 whose token is scoped to the
+    OTHER property (T1 on P2 asking for P1) is forbidden — the scope
+    check is on the auth context, not just the tenant. The identity
+    switch happens via a SEPARATE token scoped to (T1, P2), never via
+    request headers."""
     doc = _upload_pdf(client, "another.pdf", build_text_pdf(["receipt total due"]))
-    r = _get(client, doc["document_id"], PROP_1, HEADERS_T2_P2)
+    r = _get(client, doc["document_id"], PROP_1, HEADERS_T1_P2)
     assert r.status_code == 403
-    # and T2 cannot discover P1 rows by listing its own property
-    assert _list(client, PROP_2, HEADERS_T2_P2).json() == []
+    # and T1 (scoped to P2) cannot discover P1 rows by listing its own property
+    assert _list(client, PROP_2, HEADERS_T1_P2).json() == []

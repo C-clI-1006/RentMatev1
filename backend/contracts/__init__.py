@@ -12,6 +12,7 @@ from .common import (
     DraftId,
     EventId,
     LeaseId,
+    ManagerId,
     MessageId,
     PropertyId,
     RecipientId,
@@ -40,11 +41,13 @@ from .lease_rent import (
 )
 from .drafting import (
     Draft,
+    DraftSourceKind,
     DraftStatus,
     ReviewDecisionRecord,
     ReviewRequest,
 )
 from .notification import (
+    DeliveryResult,
     INotificationService,
     NotificationEvent,
     NotificationKind,
@@ -58,6 +61,7 @@ __all__ = [
     "DraftId",
     "EventId",
     "LeaseId",
+    "ManagerId",
     "MessageId",
     "PropertyId",
     "RecipientId",
@@ -83,6 +87,7 @@ __all__ = [
     "QuestionType",
     # drafting / review
     "Draft",
+    "DraftSourceKind",
     "DraftStatus",
     "ReviewDecisionRecord",
     "ReviewRequest",
