@@ -54,6 +54,18 @@ class ReportService(IReportService):
         self, request: GenerationRequest, caller: CallerIdentity
     ) -> GenerationResult:
         if not self._authorised(request, str(caller)):
+            # Authorisation is checked first, before the event-id lookup,
+            # data collection or any LLM call. The attempt is audited
+            # (trusted caller as actor, generic cause) without claiming
+            # the event_id, so a later retry is not blocked.
+            self._repository.record_failure(
+                actor=str(caller),
+                property_id=str(request.property_id),
+                period=request.period,
+                event_id=str(request.trigger.event_id),
+                created_at=utcnow().astimezone(timezone.utc),
+                code="authorization_denied",
+            )
             return ReportGenerationError(
                 code="authorization_denied", detail="caller is not authorised for this property"
             )
@@ -64,6 +76,17 @@ class ReportService(IReportService):
                 str(existing.property_id) != str(request.property_id)
                 or existing.period != request.period
             ):
+                # The event id is already bound to a different property or
+                # period. Audit the failed attempt (no report row is
+                # written, so the caller can retry with a fresh event id).
+                self._repository.record_failure(
+                    actor=str(caller),
+                    property_id=str(request.property_id),
+                    period=request.period,
+                    event_id=str(request.trigger.event_id),
+                    created_at=utcnow().astimezone(timezone.utc),
+                    code="event_id_conflict",
+                )
                 return ReportGenerationError(
                     code="event_id_conflict",
                     detail="event id belongs to a different property or period",
@@ -75,18 +98,53 @@ class ReportService(IReportService):
                 )
             return ReportGenerated(report=existing, reused=True)
 
-        collected = self._collector.collect(request.property_id, request.period)
+        try:
+            collected = self._collector.collect(request.property_id, request.period)
+        except PermissionError:
+            # A source refused access: an authorisation failure, not a
+            # data gap. Stop immediately — no LLM call, no report row,
+            # and never degrade to NOT_AVAILABLE. The attempt is
+            # audited only (generic wording; the exception text is
+            # never surfaced), so the event_id stays free for a retry.
+            self._repository.record_failure(
+                actor=self._actor(request),
+                property_id=str(request.property_id),
+                period=request.period,
+                event_id=str(request.trigger.event_id),
+                created_at=utcnow().astimezone(timezone.utc),
+                code="authorization_denied",
+            )
+            return ReportGenerationError(
+                code="authorization_denied",
+                detail="a data source refused to provide data for this property",
+            )
         unavailable = sum(
             section.availability is SectionAvailability.NOT_AVAILABLE
             for section in (collected.maintenance, collected.rent, collected.lease)
         )
-        all_unavailable = unavailable == 3
+        if unavailable == 3:
+            # All three sources unavailable: stop before narrative generation
+            # (no LLM call) and before persisting a report row. The failed
+            # attempt is audited only, so the event_id is not claimed and
+            # the same slot can be retried once the data recovers.
+            self._repository.record_failure(
+                actor=self._actor(request),
+                property_id=str(request.property_id),
+                period=request.period,
+                event_id=str(request.trigger.event_id),
+                created_at=utcnow().astimezone(timezone.utc),
+                unavailable_sources=["maintenance", "rent", "lease"],
+            )
+            return ReportGenerationError(
+                code="all_sources_unavailable",
+                detail="maintenance, rent and lease data are unavailable",
+            )
         narrative = self._narrative(collected)
         outcome = (
-            ReportOutcome.FAILED
-            if all_unavailable
-            else ReportOutcome.PARTIAL_SUCCESS
-            if unavailable or narrative.source is NarrativeSource.MISSING
+            ReportOutcome.PARTIAL_SUCCESS
+            if unavailable
+            or narrative.source is NarrativeSource.MISSING
+            or not collected.maintenance.period_range_complete
             else ReportOutcome.COMPLETE
         )
         open_tasks = _open_tasks(collected)
@@ -108,16 +166,23 @@ class ReportService(IReportService):
             narrative=narrative,
             data_as_of=collected.collected_at,
             created_at=now,
-            created_by=(
-                "system:scheduler"
-                if isinstance(request.trigger, ScheduledReportTrigger)
-                else "manager:" + request.trigger.manager_id
-            ),
+            created_by=self._actor(request),
         )
         stored = self._repository.insert(record)
         # Another request can win after the initial event-id lookup.
         # Keep the same scope check when the repository reuses that winner.
         if stored.property_id != request.property_id or stored.period != request.period:
+            # insert() already rolled back: the losing request left no
+            # report row, so only the failed attempt is audited and the
+            # event_id is claimed by the winner.
+            self._repository.record_failure(
+                actor=str(caller),
+                property_id=str(request.property_id),
+                period=request.period,
+                event_id=str(request.trigger.event_id),
+                created_at=utcnow().astimezone(timezone.utc),
+                code="event_id_conflict",
+            )
             return ReportGenerationError(
                 code="event_id_conflict",
                 detail="event id belongs to a different property or period",
@@ -150,6 +215,14 @@ class ReportService(IReportService):
         except PermissionError:
             return []
         return self._repository.list_for_period(str(property_id), period)
+
+    @staticmethod
+    def _actor(request: GenerationRequest) -> str:
+        return (
+            "system:scheduler"
+            if isinstance(request.trigger, ScheduledReportTrigger)
+            else "manager:" + request.trigger.manager_id
+        )
 
     def _authorised(self, request: GenerationRequest, caller: str) -> bool:
         if isinstance(request.trigger, ScheduledReportTrigger):

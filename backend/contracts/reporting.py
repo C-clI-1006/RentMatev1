@@ -330,6 +330,14 @@ class MaintenanceSectionData(BaseModel):
     availability: SectionAvailability
     requests: list[MaintenanceRequestRef] = Field(default_factory=list)
     note: str | None = None  # required when NOT_AVAILABLE
+    # Structured period-completeness marker (persisted with the section):
+    # False means at least one included request was created before the
+    # period with no recorded event history inside it, so its membership
+    # of this month could not be confirmed from recorded history. The row
+    # is retained (with an explanatory note), but the containing report
+    # must not be COMPLETE. Default True keeps reports persisted before
+    # this field existed on their original outcome.
+    period_range_complete: bool = True
 
     @model_validator(mode="after")
     def _check_section_state(self) -> "MaintenanceSectionData":
@@ -650,6 +658,12 @@ class ReportRecord(BaseModel):
                     "outcome is COMPLETE but data source(s) "
                     f"{unavailable} are NOT_AVAILABLE; "
                     "expected PARTIAL_SUCCESS"
+                )
+            if not self.maintenance.period_range_complete:
+                raise ValueError(
+                    "outcome is COMPLETE but maintenance period "
+                    "membership is incomplete (period_range_complete is "
+                    "False); expected PARTIAL_SUCCESS"
                 )
         return self
 

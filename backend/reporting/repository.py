@@ -19,6 +19,7 @@ from contracts.reporting import (
     RentSectionData,
     ScheduledReportTrigger,
 )
+from shared import new_id
 
 
 class ReportRepository:
@@ -134,6 +135,48 @@ class ReportRepository:
         except Exception:
             self.connection.rollback()
             raise
+
+    def record_failure(
+        self,
+        actor: str,
+        property_id: str,
+        period: ReportPeriod,
+        event_id: str,
+        created_at: datetime,
+        code: str = "all_sources_unavailable",
+        unavailable_sources: list[str] | None = None,
+    ) -> None:
+        """Audit-only record for a failed generation. No report row is
+        written, so the event_id stays free and the same slot can be
+        retried once the data recovers.
+
+        ``code`` mirrors the returned error code so the audit trail
+        says WHY the attempt failed (all sources unavailable vs.
+        authorisation denied). The details carry no exception text."""
+        details: dict[str, object] = {
+            "property_id": property_id,
+            "period": period.label,
+            "outcome": "failed",
+            "code": code,
+        }
+        if unavailable_sources is not None:
+            details["unavailable_sources"] = unavailable_sources
+        self.connection.execute(
+            "INSERT INTO audit "
+            "(audit_id,actor,action,subject_type,subject_id,event_id,details,at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                new_id(),
+                actor,
+                "report.failed",
+                "property",
+                property_id,
+                event_id,
+                json.dumps(details, ensure_ascii=False),
+                _iso(created_at),
+            ),
+        )
+        self.connection.commit()
 
     @staticmethod
     def _record(row: sqlite3.Row) -> ReportRecord:
