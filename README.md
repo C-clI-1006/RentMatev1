@@ -9,6 +9,14 @@ This repository holds the Stage 2 implementation. Stage 1 design deliverables
 
 ## Status
 
+Maintenance Coordinator implementation (Kerwin) is now available, with a
+standalone module demo, authenticated API, SQLite persistence and tests.
+See `backend/maintenance/README.md`; on this Windows machine run
+`Start-Maintenance.cmd`. Other business modules and React remain skeletons.
+The maintenance module uses its own `mc_*` tables while shared-schema review
+is pending. Live Qwen is configured via environment; unavailable inference
+requires manual review rather than silent test-double fallback.
+
 - Skeleton: shared monorepo layout, shared contracts draft, SQLite schema draft.
 - Contracts in `backend/contracts/` are a **draft for team review**.
   The four demo-relevant outcomes (registered / needs clarification / failed,
@@ -69,8 +77,8 @@ cp ../.env.example .env   # fill in LLM config when available
 uvicorn main:app --reload
 ```
 
-Database: `rentmate.db` is created from `db/schema.sql` on first run (see
-`backend/repositories/`). Demo seed data is pending.
+Database: maintenance creates its own `mc_*` tables on first API use.
+The shared `db/schema.sql` remains a draft and is not automatically applied.
 
 ## Ownership
 
