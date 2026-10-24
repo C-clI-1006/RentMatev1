@@ -37,10 +37,11 @@ Input is contracts.maintenance.MaintenanceIntake:
 }
 ```
 
-tenant_id/property_id are populated from verified context. Retrying must reuse
-the source message ID and event ID. Both keys are deduplicated per property.
-This is the trusted internal `IMaintenanceIntake` contract. The public tenant
-HTTP endpoint does not accept either identifier; it generates them server-side.
+tenant_id/property_id are populated from verified context. A trusted internal
+retry must reuse the source message ID and event ID; those keys are deduplicated
+per property by the internal `IMaintenanceIntake` contract. The public tenant
+HTTP endpoint does not accept either identifier and generates fresh values for
+every POST, so a repeated HTTP submission is a new request, not replay protection.
 
 Three mutually exclusive results:
 
@@ -131,7 +132,7 @@ stale command. 403/404 must not leak another tenant/property's record.
 
 ## Joint acceptance checklist (NOT signed off yet)
 
-- [ ] Chang + Kerwin: intake success/clarification/failure + source dedup.
+- [ ] Chang + Kerwin: intake success/clarification/failure + internal source-ID dedup.
 - [ ] Chang + Kerwin: no reply claiming a request exists when registration failed.
 - [ ] Chang + Kerwin: emergency alert actually reaches manager; sensitive reply held.
 - [ ] Chang + Kerwin: status consumer acceptance and actual delivery kept distinct.
