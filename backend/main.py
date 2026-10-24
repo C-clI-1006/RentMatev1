@@ -16,10 +16,12 @@ app = FastAPI(title="RentMate API", version="0.1.0")
 from maintenance.api import router as maintenance_router
 from review.api import router as review_router
 from reporting.api import router as reporting_router
+from reporting.manager_api import router as manager_reporting_router
 
 app.include_router(maintenance_router)
 app.include_router(review_router)
 app.include_router(reporting_router)
+app.include_router(manager_reporting_router)
 
 
 @app.get("/health")

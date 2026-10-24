@@ -218,18 +218,21 @@ def get_report(
     auth: Annotated[AuthContext, Depends(get_auth)],
     service: Annotated[ReportService, Depends(get_service)],
     connection: Annotated[sqlite3.Connection, Depends(get_connection)],
+    property_id: str | None = None,
 ):
     """A single report by id, scoped to the manager's property.
 
-    The property is taken from the auth context (the manager's verified
-    binding), so a report cannot be fetched on another property's
-    behalf. Denial and absence are indistinguishable (both 404).
+    The optional property selects one of the manager's verified bindings;
+    omission uses the property in the token for backwards compatibility.
+    Denial and absence are indistinguishable (both 404).
     """
     manager_id = manager_id_from_auth(auth)
-    property_id = auth.property_id
-    _require_access(connection, manager_id, property_id)
+    scoped_property_id = property_id or auth.property_id
+    _require_access(connection, manager_id, scoped_property_id)
     caller = CallerIdentity(manager_id)
-    record = service.get(ReportId(report_id), PropertyId(property_id), caller)
+    record = service.get(
+        ReportId(report_id), PropertyId(scoped_property_id), caller
+    )
     if record is None:
         raise HTTPException(404, "Report not found")
     return record

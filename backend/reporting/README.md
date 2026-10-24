@@ -102,11 +102,11 @@ Content-Type: application/json
   503 (all sources unavailable).
 - The scheduler token does NOT work here (401).
 
-**Fetch one report** (property is taken from the token's verified binding,
-not from the request):
+**Fetch one report** (use `property_id` when selecting another property
+bound to the same manager; omission uses the token's current property):
 
 ```http
-GET /api/manager/monthly-reports/<report_id placeholder>
+GET /api/manager/monthly-reports/<report_id placeholder>?property_id=reporting-demo-property
 Authorization: Bearer <manager session token placeholder>
 ```
 

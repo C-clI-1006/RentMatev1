@@ -203,6 +203,55 @@ def test_manager_http_denies_unbound_property(tmp_path, monkeypatch):
         _clear_overrides()
 
 
+def test_manager_http_can_use_another_verified_manager_property_binding(
+    tmp_path, monkeypatch
+):
+    client, counter = _client(tmp_path, monkeypatch)
+    connection = init_connection(tmp_path / "manager_api.db")
+    try:
+        connection.execute(
+            "INSERT INTO property (property_id,name,created_at) VALUES ('p2','Second',?)",
+            (TS,),
+        )
+        connection.execute(
+            "INSERT INTO manager_property (manager_id,property_id,created_at) "
+            "VALUES ('m1','p2',?)",
+            (TS,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    try:
+        body = {
+            "property_id": "p2",
+            "year": 2026,
+            "month": 10,
+            "idempotency_key": "cross-property",
+        }
+        generated = _post(client, "manager-token", body)
+        assert generated.status_code == 200
+        report_id = generated.json()["report"]["report_id"]
+        listed = _get(
+            client,
+            "manager-token",
+            f"{LIST_URL}?property_id=p2&year=2026&month=10",
+        )
+        assert listed.status_code == 200
+        assert [item["report_id"] for item in listed.json()] == [report_id]
+        fetched = _get(
+            client,
+            "manager-token",
+            f"{LIST_URL}/{report_id}?property_id=p2",
+        )
+        assert fetched.status_code == 200
+        assert fetched.json()["property_id"] == "p2"
+        assert counter["calls"] == 1
+        assert _report_count(tmp_path / "manager_api.db") == 1
+    finally:
+        _clear_overrides()
+
+
 def test_manager_http_same_idempotency_key_reuses_report(tmp_path, monkeypatch):
     client, counter = _client(tmp_path, monkeypatch)
     try:
