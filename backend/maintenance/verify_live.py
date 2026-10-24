@@ -11,18 +11,21 @@ import os
 import secrets
 import tempfile
 import time
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from main import app
+from main import create_app
+from llm.classify import StubDocumentClassifier
 from maintenance.api import get_store
 from maintenance.store import Store
 from shared.sqlite import init_connection
 
 
 def run():
+    app = None
     token, manager_token = secrets.token_hex(24), secrets.token_hex(24)
     previous = os.environ.get("RENTMATE_AUTH_TOKENS")
     os.environ["RENTMATE_AUTH_TOKENS"] = json.dumps(
@@ -43,7 +46,7 @@ def run():
         "boundary": "Synthetic API requests; real model; no real tenant/evidence consumer delivery.",
     }
     try:
-        with tempfile.TemporaryDirectory(prefix="rentmate-live-") as directory:
+        with tempfile.TemporaryDirectory(prefix="rentmate-live-") as directory, ExitStack() as cleanup:
             database = Path(directory) / "acceptance.db"
             db = init_connection(database)
             timestamp = "2026-01-01T00:00:00Z"
@@ -70,10 +73,19 @@ def run():
             db.commit()
             db.close()
             store = Store(database)
+            app = create_app(str(database), str(Path(directory) / "uploads"), classifier=StubDocumentClassifier())
+            cleanup.callback(app.state.evidence_service._repo.close)
             app.dependency_overrides[get_store] = lambda: store
             tenant_headers = {"Authorization": "Bearer " + token}
             manager_headers = {"Authorization": "Bearer " + manager_token}
             with TestClient(app) as client:
+                upload = client.post(
+                    "/api/evidence/documents", headers=tenant_headers,
+                    data={"property_id": "acceptance-property"},
+                    files={"file": ("completion.txt", b"Synthetic completion evidence", "text/plain")},
+                )
+                upload.raise_for_status()
+                evidence_id = upload.json()["document"]["document_id"]
                 cases = [
                     (
                         "routine",
@@ -146,7 +158,7 @@ def run():
                             "expected_version": record["version"],
                             "target_status": state,
                             "reason": "Synthetic acceptance manager decision: " + state,
-                            "evidence_refs": ["synthetic-evidence-reference"],
+                            "evidence_refs": [evidence_id],
                         },
                     )
                     response.raise_for_status()
@@ -175,7 +187,8 @@ def run():
         )
         return report
     finally:
-        app.dependency_overrides.pop(get_store, None)
+        if app is not None:
+            app.dependency_overrides.pop(get_store, None)
         if previous is None:
             os.environ.pop("RENTMATE_AUTH_TOKENS", None)
         else:

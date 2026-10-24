@@ -14,6 +14,7 @@ interaction. Source: Stage 1 guide §18 (interface contracts), §13
 | `drafting.py` | `Draft`, `ReviewRequest`, `ReviewDecisionRecord` | communication ↔ review |
 | `notification.py` | `NotificationEvent`, `DeliveryResult`, `INotificationService` | all modules ↔ notification |
 | `audit.py` | `AuditEvent` | all modules |
+| `evidence.py` | `EvidenceDocument`, `UploadResult`, `IEvidenceUpload`, `IEvidenceClassifier` / `IEvidenceReview` / `IEvidenceTimeline` (reserved) | evidence (Jenny) ↔ maintenance / lease_rent / manager UI |
 
 ## Change process (binding)
 

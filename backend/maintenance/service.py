@@ -1,4 +1,7 @@
 import json
+import sqlite3
+
+from evidence.maintenance import EvidenceReferenceError, validate_references
 
 from contracts.maintenance import (
     FailedIntake,
@@ -284,6 +287,17 @@ class MaintenanceService(IMaintenanceIntake, IMaintenanceTracking):
                 )
             if command.requires_evidence() and not any(e.strip() for e in command.evidence_refs):
                 return StatusResultError(code=F.EVIDENCE_REQUIRED)
+            if command.evidence_refs:
+                # Same write transaction as the transition: references cannot
+                # be deleted/rebound between validation and closing the request.
+                try:
+                    validate_references(db, command.evidence_refs, v.property_id, self.auth)
+                except EvidenceReferenceError:
+                    return StatusResultError(code=F.EVIDENCE_INVALID)
+                except PermissionError:
+                    return StatusResultError(code=F.FORBIDDEN)
+                except sqlite3.Error:
+                    return StatusResultError(code=F.EVIDENCE_UNAVAILABLE)
             old = v.status
             v.status, v.version = command.target_status, v.version + 1
             event = self._event(
