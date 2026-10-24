@@ -26,6 +26,7 @@ from evidence.router import build_evidence_service, router as evidence_router
 from maintenance.api import router as maintenance_router
 from review.api import router as review_router
 from reporting.api import router as reporting_router
+from reporting.manager_api import router as manager_reporting_router
 
 _DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "rentmate.db")
 _DEFAULT_STORAGE_ROOT = os.path.join(os.path.dirname(__file__), "evidence_storage")
@@ -85,6 +86,7 @@ def create_app(db_path: str | None = None, storage_root: str | None = None) -> F
     app.include_router(maintenance_router)
     app.include_router(review_router)
     app.include_router(reporting_router)
+    app.include_router(manager_reporting_router)
     app.include_router(ops_router)
 
     @app.get("/health")
