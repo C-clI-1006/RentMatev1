@@ -249,3 +249,30 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_request ON audit (request_id);
+
+-- ---------------------------------------------------------------------------
+-- Monthly property reports (owned: reporting)
+-- Source records are read-only; this table stores generated snapshots only.
+-- event_id is the trigger idempotency key. A new event_id deliberately creates
+-- the next generation for the same property/month.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS report (
+    report_id      TEXT PRIMARY KEY,
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    period_year    INTEGER NOT NULL,
+    period_month   INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+    generation     INTEGER NOT NULL CHECK (generation >= 1),
+    trigger_kind   TEXT NOT NULL CHECK (trigger_kind IN ('scheduled','manager')),
+    event_id       TEXT NOT NULL UNIQUE,
+    manager_id     TEXT,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('complete','partial_success','failed')),
+    data_json      TEXT NOT NULL,
+    narrative_json TEXT NOT NULL,
+    data_as_of     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    created_by     TEXT NOT NULL,
+    UNIQUE (property_id, period_year, period_month, generation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_property_period
+    ON report (property_id, period_year, period_month);

@@ -18,6 +18,7 @@ from .models import (
     VerifiedFactRecord,
 )
 from .repository import LeaseRentDataError, SQLiteLeaseRentRepository
+from .reporting import SQLiteLeaseRentReportSource
 from .rules import (
     assess_lease_deadline,
     assess_rent,
@@ -45,6 +46,7 @@ __all__ = [
     "RentReminderCandidate",
     "RentStatus",
     "SQLiteLeaseRentRepository",
+    "SQLiteLeaseRentReportSource",
     "VerifiedFactRecord",
     "assess_lease_deadline",
     "assess_rent",
