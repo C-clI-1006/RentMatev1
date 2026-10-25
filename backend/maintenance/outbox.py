@@ -9,14 +9,23 @@ class RetryableHandoffError(Exception):
     """Adapter guarantees non-acceptance, making retry safe."""
 
 
-def dispatch_pending(store, adapters, limit=50):
+class PermanentHandoffError(Exception):
+    """Definite rejection; retrying the same payload cannot repair it."""
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def dispatch_pending(store, adapters, limit=50, *, property_id=None):
     results = []
     for _ in range(limit):
         with store.transaction() as db:
             rows = db.execute(
                 "SELECT rowid,* FROM mc_outbox WHERE status IN ('pending','retry') ORDER BY rowid"
             ).fetchall()
-            row = next((r for r in rows if r["target"] in adapters), None)
+            row = next((r for r in rows if r["target"] in adapters
+                        and (property_id is None or r["property_id"] == property_id)), None)
             if row is None:
                 break
             db.execute(
@@ -27,6 +36,8 @@ def dispatch_pending(store, adapters, limit=50):
             if adapters[row["target"]](json.loads(row["document"])) is not True:
                 raise RuntimeError("No definite acknowledgement")
             status, error = "handed_off", None
+        except PermanentHandoffError as exc:
+            status, error = "rejected", exc.code
         except RetryableHandoffError:
             status, error = "retry", "Consumer confirmed non-acceptance"
         except Exception:  # noqa: BLE001 - plugin boundary must fail closed without leaking secrets

@@ -58,6 +58,11 @@ def setup(tmp_path):
           ('m1','Manager 1','{ts}'), ('m2','Manager 2','{ts}');
         INSERT INTO manager_property (manager_id,property_id,created_at) VALUES
           ('m1','p1','{ts}'), ('m2','p2','{ts}');
+        INSERT INTO evidence_document
+          (document_id,tenant_id,property_id,original_filename,file_type,size_bytes,
+           storage_ref,upload_status,created_at,updated_at)
+        VALUES ('ev1','t1','p1','completion.txt','txt',1,
+                'evidence/ev1.txt','saved','{ts}','{ts}');
         """
     )
     db.commit()

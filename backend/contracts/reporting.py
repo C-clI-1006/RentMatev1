@@ -61,7 +61,7 @@ Multi-generation semantics (agreed direction; details marked below):
 
 Data as-of — implemented prototype policy:
 - The current prototype INTENDS to use the freshest data available at
-  generation time (当前原型拟使用生成时取得的最新数据). This is a
+  generation time. This is a
   PROPOSAL for the current prototype, NOT a Stage 1 mandate.
 - `ReportRecord.data_as_of` records the UTC moment at which the
   generation read its sources. It does NOT represent a same-instant
@@ -234,9 +234,9 @@ class SectionAvailability(str, Enum):
     """Per-section data status — MUST be rendered distinctly, never
     collapsed into one another:
     - AVAILABLE: data was collected;
-    - EMPTY: source reachable, zero records in scope -> "本周期无记录"
+    - EMPTY: source reachable, zero records in scope -> "no records this period"
       (no records this period), never "no problem";
-    - NOT_AVAILABLE: source unreachable/failed -> "数据不可用" (data
+    - NOT_AVAILABLE: source unreachable/failed -> "data unavailable" (data
       unavailable) with a note, never "no problem" or "no records".
     """
 
@@ -585,7 +585,7 @@ class ReportRecord(BaseModel):
     data_as_of — [PROPOSED, pending confirmation — see Q11]: the UTC
     moment at which this generation read its sources, under the
     prototype proposal to use the freshest data available at
-    generation time (当前原型拟使用生成时取得的最新数据). It is NOT a
+    generation time. It is NOT a
     claim that all sources form a same-instant complete snapshot:
     sources are read sequentially and each reflects the state it held
     at its own read time (see module docstring "Data as-of"). Period-

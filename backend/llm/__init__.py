@@ -17,8 +17,14 @@ This package exposes:
 - `KeywordPriorityAssessor`: a LABELLED test double used in tests and
   until the proxy is available. It is deterministic keyword matching,
   not inference; its output is clearly labelled `source="stub"`.
-- `LlmPriorityAssessor`: the live-adapter slot (fails closed to
-  AssessmentFailure until the proxy is configured and confirmed).
+  (A live priority assessor will slot in here when the school proxy is
+  confirmed; until then no `LlmPriorityAssessor` exists — do not
+  import it.)
+- `IDocumentClassifier` / `StubDocumentClassifier` /
+  `QwenDocumentClassifier` (in `llm.classify`): UC6 document
+  classification — a SEPARATE capability from priority assessment,
+  with the same fail-closed rules (any failure routes the document to
+  manual review).
 """
 
 from __future__ import annotations
@@ -27,6 +33,29 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from contracts.maintenance import Priority
+
+from .classify import (
+    CATEGORIES,
+    ClassificationResult,
+    ClassifyFailure,
+    IDocumentClassifier,
+    QwenDocumentClassifier,
+    StubDocumentClassifier,
+    build_document_classifier,
+)
+
+__all__ = [
+    "Assessment",
+    "AssessmentFailure",
+    "IPriorityAssessor",
+    "CATEGORIES",
+    "ClassificationResult",
+    "ClassifyFailure",
+    "IDocumentClassifier",
+    "QwenDocumentClassifier",
+    "StubDocumentClassifier",
+    "build_document_classifier",
+]
 
 
 @dataclass(frozen=True)

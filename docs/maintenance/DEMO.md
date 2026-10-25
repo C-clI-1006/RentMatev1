@@ -1,4 +1,4 @@
-# Kerwin's maintenance demo / 演示操作稿
+# Kerwin's Maintenance Demonstration Guide
 
 ## Before demonstration
 
@@ -9,8 +9,8 @@
    random local demo sessions, not the model API key. The launcher also prints
    a deliberately unbound token for the expected-403 demonstration. Do not
    display the real model key.
-5. Use synthetic issue descriptions and evidence references only. References
-   are illustrative unless actual evidence verification is integrated.
+5. Use synthetic issue descriptions and uploaded synthetic documents only.
+   References must now be actual Evidence document IDs in the same property.
 
 ## A. Happy path, approximately 3 minutes (suggested, not course time limit)
 
@@ -27,7 +27,9 @@ trusted caller retries with the same source IDs.
 
 Keep a meaningful decision reason. Choose approved -> Record status change;
 then in_progress. Attempt awaiting_confirmation with empty evidence: expect
-rejection. Enter synthetic evidence reference demo-completion-001 ->
+rejection. Upload a synthetic completion document as the tenant through
+`POST /api/evidence/documents` in Swagger and copy its returned document_id.
+Use that document ID as the evidence reference ->
 awaiting_confirmation -> closed. Each successful command adds one version/history
 entry. Closure is a manager confirmation, not a model decision.
 
@@ -81,8 +83,10 @@ Q: Are priority categories statutory response times?
 A: No, they are configurable operational categories from our Stage 1 design.
 
 Q: What is still group integration work?
-A: Real evidence verification, Communication/Evidence consumers, shared login,
-Reporting consumption and the group frontend. Distinguish each from local tests.
+A: Evidence validation/receipt/timeline now have local integration tests, but
+Kerwin's joint review and trusted adapter deployment wiring remain pending.
+Communication delivery, shared login, Reporting consumption and the group frontend
+remain separate group work. Distinguish local tests from deployed integration.
 
 ## D. Seeded manager-review and scope demonstration
 
