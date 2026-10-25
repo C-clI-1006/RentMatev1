@@ -34,6 +34,8 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 from maintenance.api import router as maintenance_router  # noqa: E402
 from review.api import router as review_router  # noqa: E402
+from reporting.api import router as reporting_router  # noqa: E402
+from reporting.manager_api import router as manager_reporting_router  # noqa: E402
 
 from evidence.router import build_evidence_service, router as evidence_router  # noqa: E402
 from llm.classify import IDocumentClassifier  # noqa: E402
@@ -60,6 +62,8 @@ def create_app(
     # Maintenance + review routers (prefixes live on the routers).
     app.include_router(maintenance_router)
     app.include_router(review_router)
+    app.include_router(reporting_router)
+    app.include_router(manager_reporting_router)
 
     # Evidence uses server-side Bearer identities, tenant_property reads,
     # and manager_property authorization for independent manager reviews.

@@ -111,7 +111,7 @@ def _rent_available() -> RentSectionData:
                 period="2026-10",
                 amount_due="1200.00",
                 amount_paid=None,
-                status="unpaid",
+                status="unpaid-but-not-due",
                 references=[SourceReference(source_type="rent_record", source_id="rr-1")],
             )
         ],

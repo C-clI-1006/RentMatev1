@@ -12,6 +12,7 @@ _env = patch.dict(os.environ, {
     "DATABASE_PATH": str(Path(_sandbox.name) / "app.db"),
     "EVIDENCE_STORAGE_ROOT": str(Path(_sandbox.name) / "storage"),
     "RENTMATE_AUTH_TOKENS": "{}",
+    "RENTMATE_SCHEDULER_TOKEN": "",
     "LLM_BASE_URL": "",
     "LLM_API_KEY": "",
     "LLM_MODEL": "test-only",

@@ -458,6 +458,43 @@ def test_report_period_history_and_exclusive_boundary(setup, monkeypatch):
     assert source.list_for_period("p1", ReportPeriod(year=2026, month=8)).availability == A.EMPTY
 
 
+def test_report_marks_month_end_state_unknown_when_event_history_is_missing(
+    setup, monkeypatch
+):
+    from datetime import datetime
+
+    from contracts.reporting import ReportPeriod
+    from contracts.reporting import SectionAvailability as A
+    from maintenance.reporting import MaintenanceReportSource
+
+    store, tenant, manager = setup
+    monkeypatch.setattr(
+        "maintenance.service.utcnow", lambda: datetime(2026, 9, 1, tzinfo=UTC)
+    )
+    result = tenant.submit_issue(intake())
+    with store.transaction() as db:
+        row = db.execute(
+            "SELECT document FROM mc_request WHERE id=?", (result.request_id,)
+        ).fetchone()
+        document = json.loads(row[0])
+        document["events"] = []
+        db.execute(
+            "UPDATE mc_request SET document=? WHERE id=?",
+            (json.dumps(document), result.request_id),
+        )
+
+    section = MaintenanceReportSource(manager).list_for_period(
+        "p1", ReportPeriod(year=2026, month=10)
+    )
+
+    # Keep the local reporting policy: unknown membership is retained and
+    # identified explicitly rather than silently treated as no records.
+    assert section.availability == A.AVAILABLE
+    assert [row.request_id for row in section.requests] == [result.request_id]
+    assert "could not be determined" in section.note
+    assert result.request_id in section.note
+
+
 def test_strict_replay_concurrent_and_payload_conflict(setup):
     store, tenant, _manager = setup
     with ThreadPoolExecutor(max_workers=4) as pool:

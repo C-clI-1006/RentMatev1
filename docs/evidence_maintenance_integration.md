@@ -68,6 +68,12 @@ A successful event has one receipt, one timeline entry, and unique document link
 
 No background dispatcher or second sender was added. Other outbox consumers retain their existing behavior. Deployment still requires trusted property-scoped adapter wiring and agreement on operational handling of rejected events.
 
+## Reporting main integration (2026-10-25)
+
+The integration with main b8f86474b792d2986452f8597457a29ae7b6b06b retains both the monthly scheduler router and manager reporting router alongside Evidence, Maintenance, Review, health, and rent-alert endpoints. Evidence event reception, document links, timeline queries, receipts, and pre-closure validation remain implemented.
+
+The combined schema version is 5. Historical main version 3 installed report snapshots, while Evidence version 3 added rent due_date and version 4 added event persistence. Version 5 reconciles these histories before schema indexes run: it checks due_date and creates the reporting tables idempotently. Existing reports, rent rows, manager bindings, receipts, timeline entries, and evidence links are preserved. Fresh and historical databases are tested only in temporary storage. Automatic background dispatch remains outside this integration.
+
 ## Implementation and validation history
 
 Date: 2026-10-24. The remote branch was verified at 2a5d894939ea90260f4b93abb8a58be712480070 before implementation. Changes initially remained uncommitted; delivery subsequently completed in 275c718a10ccdb45ba0fd3fb0e5749907fd2af5f.

@@ -234,7 +234,7 @@ def test_init_connection_upgrades_legacy_db_to_due_date(tmp_path):
 
     # 3. The manager and due-date migrations remain ordered, followed by
     #    the Evidence event receipt/timeline tables in v4.
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == 5
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # 4. The migration chain that predated this step is untouched.
@@ -456,3 +456,81 @@ def test_evidence_repository_on_fresh_db(tmp_path):
         ).fetchone() is not None
     finally:
         repo.close()
+
+
+@pytest.mark.parametrize("branch", ["main_v3", "evidence_v3", "evidence_v4"])
+def test_divergent_migration_histories_converge_without_data_loss(tmp_path, branch):
+    """Version 3 meant reports on main, but due_date on the Evidence branch."""
+    import re
+    from shared.sqlite import SCHEMA_PATH
+
+    db_path = tmp_path / "divergent.db"
+    _build_legacy_db(db_path)
+    if branch == "main_v3":
+        conn = sqlite3.connect(db_path)
+        # Reproduce main's report table without running the integrated migration.
+        report_ddl = re.search(r"CREATE TABLE IF NOT EXISTS report \([\s\S]*?;", SCHEMA_PATH.read_text(encoding="utf-8"))[0]
+        conn.executescript(report_ddl)
+        conn.execute(
+            "INSERT INTO report VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("report-kept", PROP, 2026, 10, 1, "scheduled", "trigger-kept", None,
+             "complete", "{}", "{}", NOW, NOW, "system:scheduler"),
+        )
+        original_report = conn.execute("SELECT * FROM report").fetchone()
+        conn.execute("PRAGMA user_version=3")
+    else:
+        conn = init_connection(db_path)
+        conn.execute("DROP TABLE report")
+        if branch == "evidence_v3":
+            for table in ("evidence_event_document", "evidence_maintenance_timeline", "evidence_event_receipt"):
+                conn.execute(f"DROP TABLE {table}")
+            conn.execute("PRAGMA user_version=3")
+        else:
+            conn.execute(
+                "INSERT INTO evidence_document VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("doc-kept", TENANT, PROP, "kept.txt", "txt", 1, "evidence/kept.txt", "saved", NOW, NOW),
+            )
+            conn.execute("INSERT INTO evidence_event_receipt VALUES (?,?,?,?,?)",
+                         ("event-kept", PROP, "{}", NOW, MANAGER))
+            conn.execute("INSERT INTO evidence_maintenance_timeline VALUES (?,?,?,?)",
+                         ("event-kept", "request-kept", PROP, NOW))
+            conn.execute("INSERT INTO evidence_event_document VALUES (?,?)", ("event-kept", "doc-kept"))
+            conn.execute("PRAGMA user_version=4")
+    before = _rent_rows(conn)
+    conn.commit()
+    conn.close()
+    for _ in range(2):
+        upgraded = init_connection(db_path)
+        try:
+            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
+            assert _rent_rows(upgraded) == before
+            assert upgraded.execute("SELECT count(*) FROM rent_record WHERE due_date IS NULL").fetchone()[0] == 2
+            assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert upgraded.execute("SELECT count(*) FROM manager_property").fetchone()[0] == 1
+            if branch == "main_v3":
+                assert tuple(upgraded.execute("SELECT * FROM report").fetchone()) == original_report
+            else:
+                assert upgraded.execute("SELECT count(*) FROM report").fetchone()[0] == 0
+            assert upgraded.execute("SELECT count(*) FROM evidence_event_receipt").fetchone()[0] == (1 if branch == "evidence_v4" else 0)
+            if branch == "evidence_v4":
+                assert tuple(upgraded.execute("SELECT * FROM evidence_event_document").fetchone()) == ("event-kept", "doc-kept")
+        finally:
+            upgraded.close()
+
+
+def test_application_factory_mounts_both_reporting_and_evidence(tmp_path):
+    from main import create_app
+    from llm.classify import StubDocumentClassifier
+
+    app = create_app(str(tmp_path / "routes.db"), str(tmp_path / "uploads"), classifier=StubDocumentClassifier())
+    try:
+        paths = app.openapi()["paths"]
+        assert set(paths) >= {
+            "/health", "/api/maintenance/requests", "/api/reviews",
+            "/api/ops/rent-alerts/run", "/api/ops/monthly-reports/run",
+            "/api/manager/monthly-reports", "/api/manager/monthly-reports/generate",
+            "/api/evidence/documents", "/api/evidence/reviews",
+            "/api/evidence/maintenance-events/{event_id}",
+        }
+    finally:
+        app.state.evidence_service._repo.close()

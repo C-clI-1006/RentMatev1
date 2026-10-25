@@ -1,9 +1,8 @@
-"""Property Reporting contract (Stage 1 UC7 monthly report) — DRAFT.
+"""Property Reporting contract (Stage 1 UC7 monthly report).
 
-Status: DRAFT for team sign-off. Nothing here is mandated yet; every
-open decision is marked `[OPEN ...]` or `[PROPOSED ...]` below. This
-file is the only file the reporting owner (Sharon) proposes to change
-in P0; `db/schema.sql` and other modules are NOT touched by it.
+The source interfaces, outcome policy, idempotency rules and persistence
+shape below are implemented by the reporting integration. Historical open
+questions remain labelled where they still describe future refinements.
 
 Aligned to Stage 1 report:
 - §5.3.7 UC7 (System Generates Monthly Property Activity Report):
@@ -21,10 +20,8 @@ Aligned to Stage 1 report:
 Actors:
 - Manager only. UC7 has no tenant / draft / review pipeline; reports
   are generated on schedule or on manager request.
-- The triggering manager must be authorised for the property.
-  [OPEN Q6 — group] The only candidate binding today is
-  `tenant_property.role = 'manager'` (db/schema.sql); confirm the
-  source of the authorisation check.
+- The triggering manager must be authorised through the authoritative
+  `manager_property` binding. Scheduler calls use a separate trusted identity.
 
 Confirmed baseline (Stage 1, no open question):
 - Five fixed sections: maintenance, rent, lease status, outstanding
@@ -62,7 +59,7 @@ Multi-generation semantics (agreed direction; details marked below):
       returns `event_id_conflict` (ReportGenerationError.code).
   (3) NEVER silently return an old report on mismatch.
 
-Data as-of — [PROPOSED, pending confirmation — see Q11]:
+Data as-of — implemented prototype policy:
 - The current prototype INTENDS to use the freshest data available at
   generation time. This is a
   PROPOSAL for the current prototype, NOT a Stage 1 mandate.
@@ -80,17 +77,13 @@ Data as-of — [PROPOSED, pending confirmation — see Q11]:
   today and remain UN-SUPPORTED / PENDING CONFIRMATION. Do not
   implement or promise them on the basis of this contract.
 
-Data-mandatory policy — [PROPOSED, pending group confirmation]:
+Data-mandatory policy — implemented prototype policy:
 - Each of maintenance / rent / lease is SECTION-mandatory: if one is
   NOT_AVAILABLE, the report is still generated with that section
   marked unavailable and the outcome is `partial_success` (UC7 A1
   semantics).
-- "If ALL THREE of maintenance, rent and lease are NOT_AVAILABLE,
-  stop generation and inform the manager" is a PROPOSAL. It is NOT
-  yet an A2 mapping: UC7 A2 only says that generation stops and the
-  manager is informed when required information cannot be accessed;
-  which information counts as REQUIRED is exactly what is being
-  decided here. Do not cite UC7 A2 as if this were settled.
+- If ALL THREE of maintenance, rent and lease are NOT_AVAILABLE,
+  generation stops and records an audited failed outcome.
 
 Maintenance in-scope window — [PROPOSED, Kerwin Q2]:
 - A request is in scope for the period if ANY of:
@@ -101,9 +94,8 @@ Maintenance in-scope window — [PROPOSED, Kerwin Q2]:
   created-in-period filter would miss it. The terminal-status set and
   the in-period status-change source (MaintenanceEvent.occurred_at vs
   maintenance_request.updated_at) must come from the provider.
-- The LLM-failure behaviour (option A: keep structured data, narrative
-  marked MISSING, outcome stays at least partial_success) is
-  RECOMMENDED but not yet mandated; see ReportNarrative.
+- LLM failure keeps structured data, marks the narrative MISSING and
+  produces at least a partial-success outcome.
 - Enum drift: this contract uses the contract enums from
   contracts/maintenance.py. db/schema.sql (DRAFT v0.1) currently has
   different priority/status values; the provider must serve contract
@@ -302,7 +294,8 @@ class MaintenanceRequestRef(BaseModel):
     request_id: RequestId
     title: str
     status: MaintenanceStatus
-    priority: Priority | None = None  # Unknown while assessment/manual review is pending.
+    # Under-review requests legitimately have no assessed priority yet.
+    priority: Priority | None = None
     created_at: datetime
     last_activity_at: datetime  # latest MaintenanceEvent.occurred_at
     references: list[SourceReference] = Field(default_factory=list)
@@ -337,6 +330,14 @@ class MaintenanceSectionData(BaseModel):
     availability: SectionAvailability
     requests: list[MaintenanceRequestRef] = Field(default_factory=list)
     note: str | None = None  # required when NOT_AVAILABLE
+    # Structured period-completeness marker (persisted with the section):
+    # False means at least one included request was created before the
+    # period with no recorded event history inside it, so its membership
+    # of this month could not be confirmed from recorded history. The row
+    # is retained (with an explanatory note), but the containing report
+    # must not be COMPLETE. Default True keeps reports persisted before
+    # this field existed on their original outcome.
+    period_range_complete: bool = True
 
     @model_validator(mode="after")
     def _check_section_state(self) -> "MaintenanceSectionData":
@@ -353,7 +354,9 @@ class RentRecordRef(BaseModel):
     period: str  # "YYYY-MM", matches rent_record.period
     amount_due: Decimal | None = None
     amount_paid: Decimal | None = None
-    status: str  # schema: unpaid | partial | paid | overdue
+    # Provider-derived three-state model agreed for UC4. A partial payment is
+    # represented by amount_paid < amount_due, never by a separate status.
+    status: Literal["paid", "unpaid-but-not-due", "overdue"]
     references: list[SourceReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -371,9 +374,8 @@ class RentRecordRef(BaseModel):
 class RentSectionData(BaseModel):
     availability: SectionAvailability
     records: list[RentRecordRef] = Field(default_factory=list)
-    # [OPEN Q — Ziheng #3] which rent statuses count as "unpaid/
-    # overdue" for the outstanding-task derivation: proposed
-    # status in ("unpaid", "overdue") — confirm.
+    # Outstanding rent uses both unpaid-but-not-due and overdue. The latter
+    # additionally triggers the deterministic overdue risk rule.
     note: str | None = None  # required when NOT_AVAILABLE
 
     @model_validator(mode="after")
@@ -387,18 +389,17 @@ class RentSectionData(BaseModel):
 class LeaseRef(BaseModel):
     """One lease relevant to the property (schema: lease).
 
-    NOTE: the `lease` table has no status column and no amount field.
-    [OPEN Q — Ziheng #1] `status` is proposed to be DERIVED from
-    start_date/end_date vs. the period (e.g. active / expiring /
-    expired / unknown) — or Ziheng may add a real status field to the
-    provider. Amount is deliberately out of scope for Stage 1.
+    The `lease` table has no status column and no amount field. Status is
+    deterministically derived by the provider from start_date/end_date and
+    the collection date: upcoming / active / expiring / expired. Amount is
+    deliberately out of scope for Stage 1.
     """
 
     lease_id: LeaseId
     tenant_id: TenantId | None = None
     start_date: date
     end_date: date | None = None
-    status: str  # derived or provider-provided; see NOTE
+    status: Literal["upcoming", "active", "expiring", "expired"]
     references: list[SourceReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -432,10 +433,8 @@ class OpenTaskRef(BaseModel):
 
     Proposed derivation [OPEN — group]:
     - maintenance: request still open at period end (non-terminal);
-    - rent:        rent record with unpaid/overdue status for the
-                   period [Ziheng #3];
-    - lease:       lease action still pending, e.g. expiring/unknown
-                   status [Ziheng #1].
+    - rent:        rent record with unpaid-but-not-due/overdue status;
+    - lease:       lease action still pending, e.g. upcoming/expiring.
     """
 
     source: Literal["maintenance", "rent", "lease"]
@@ -660,6 +659,12 @@ class ReportRecord(BaseModel):
                     f"{unavailable} are NOT_AVAILABLE; "
                     "expected PARTIAL_SUCCESS"
                 )
+            if not self.maintenance.period_range_complete:
+                raise ValueError(
+                    "outcome is COMPLETE but maintenance period "
+                    "membership is incomplete (period_range_complete is "
+                    "False); expected PARTIAL_SUCCESS"
+                )
         return self
 
 
@@ -734,7 +739,7 @@ class ILeaseRentReportSource(ABC):
     """Batch read interface that reporting needs from the lease & rent
     module.
 
-    [DRAFT — Ziheng #1] ILeaseRentQuery.get_facts is scoped to a
+    ILeaseRentQuery.get_facts is scoped to a
     tenant question; reporting needs a property/period batch summary.
     No direct table reads: reporting consumes this interface only.
     """
@@ -762,8 +767,8 @@ class IReportService(ABC):
       resolved by the layer above the service from the SERVER-SIDE
       auth context. Identity fields carried in the request payload
       (e.g. trigger.manager_id) are NEVER trusted on their own.
-    - Source of the property-access binding: [OPEN Q6 — group].
-      Candidate today: tenant_property.role = 'manager'.
+    - Manager access is verified through `manager_property` using the
+      shared permissions service.
     - Scheduled triggers use a DEDICATED TRUSTED INTERNAL invocation
       path (see ScheduledReportTrigger): the absence of a manager_id
       must not block them, and ordinary requests cannot impersonate
@@ -789,8 +794,7 @@ class IReportService(ABC):
            trusted internal path only). On failure return
            `authorization_denied` IMMEDIATELY — do not compare
            event_id yet, and do not reveal whether a matching report
-           exists. [OPEN Q6 — group: source of the property-access
-           check]
+           exists, using the authoritative manager-property binding.
         2. Duplicate check AFTER authorisation: if
            `trigger.event_id` already exists in the `report` table,
            compare the stored report's property and period against the
@@ -830,8 +834,8 @@ class IReportService(ABC):
 
 
 # ---------------------------------------------------------------------------
-# PROPOSED DDL — comment only. NOT applied to db/schema.sql in P0; the
-# schema change ships as a reviewable proposal after contract sign-off.
+# Implemented DDL reference. The executable form lives in db/schema.sql and
+# the shared SQLite v3 migration.
 # ---------------------------------------------------------------------------
 #
 # CREATE TABLE IF NOT EXISTS report (
@@ -870,25 +874,23 @@ class IReportService(ABC):
 #                 terminal-status set; in-period status-change source
 #                 (MaintenanceEvent.occurred_at vs maintenance_request
 #                 .updated_at).
-# Q3 [Ziheng]     ILeaseRentReportSource.period_summary shape; EMPTY vs
-#                 NOT_AVAILABLE per section.
+# Q3 [resolved — Ziheng] ILeaseRentReportSource.period_summary accepted
+#                 and implemented; EMPTY vs NOT_AVAILABLE is preserved
+#                 independently for rent and lease.
 # Q4 [Kerwin + Chaney] Enum drift: schema (DRAFT v0.1) priority/status
 #                 values differ from the contract enums; provider must
 #                 serve contract values; schema aligned by maintenance
 #                 owner.
-# Q5 [group]      Two-level mandatory policy: per-section mandatory
-#                 (A1 semantics) + "all three missing -> stop" as a
-#                 PROPOSAL (not yet an A2 mapping).
-# Q6 [group]      Manager authorisation source: tenant_property.role =
-#                 'manager' is the only candidate today.
+# Q5 [resolved]   One/two missing -> partial; all three missing -> failed.
+# Q6 [resolved]   Manager authorisation uses manager_property.
 # Q7 [group]      Outstanding-task derivation rule (three sources).
 # Q8 [group]      Risk rule list + thresholds (RiskRule is a starting
 #                 proposal only).
-# Q9 [Ziheng]     Lease status: derived from dates vs a real field;
-#                 amount out of scope for Stage 1.
-# Q10 [Chaney]    LLM-failure option A recommended (pre-P2); scheduler
-#                 stable event_id (pre-P3).
-# Q11 [group]     data_as_of semantics: prototype proposal to record the
+# Q9 [resolved — Ziheng] Lease status is derived from dates; amount is
+#                 out of scope for Stage 1.
+# Q10 [resolved]  LLM failure preserves structured data; scheduler uses a
+#                 stable event_id per property/month.
+# Q11 [resolved]  data_as_of records the
 #                 UTC moment the generation read its sources (freshest
 #                 data at generation time; NOT a same-instant complete
 #                 snapshot across sources; NOT a Stage 1 mandate).

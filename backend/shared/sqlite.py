@@ -36,7 +36,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # v4: receipt, timeline entry and document links are committed together.
 _EVIDENCE_EVENT_DDL = """
@@ -85,6 +85,29 @@ CREATE TABLE IF NOT EXISTS manager_property (
 
 CREATE INDEX IF NOT EXISTS idx_manager_property_property
     ON manager_property (property_id);
+"""
+
+_REPORT_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS report (
+    report_id      TEXT PRIMARY KEY,
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    period_year    INTEGER NOT NULL,
+    period_month   INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+    generation     INTEGER NOT NULL CHECK (generation >= 1),
+    trigger_kind   TEXT NOT NULL CHECK (trigger_kind IN ('scheduled','manager')),
+    event_id       TEXT NOT NULL UNIQUE,
+    manager_id     TEXT,
+    outcome        TEXT NOT NULL CHECK (outcome IN ('complete','partial_success','failed')),
+    data_json      TEXT NOT NULL,
+    narrative_json TEXT NOT NULL,
+    data_as_of     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    created_by     TEXT NOT NULL,
+    UNIQUE (property_id, period_year, period_month, generation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_property_period
+    ON report (property_id, period_year, period_month);
 """
 
 
@@ -138,11 +161,28 @@ def _ensure_rent_record_due_date(conn: Connection) -> None:
         conn.execute("ALTER TABLE rent_record ADD COLUMN due_date TEXT")
 
 
+def _ensure_report_tables(conn: Connection) -> None:
+    """Retain main's reporting snapshot migration without rewriting report rows."""
+    conn.executescript(_REPORT_TABLE_DDL)
+
+
+def _ensure_integrated_schema(conn: Connection) -> None:
+    """v5 convergence for the two historical meanings of user_version=3.
+
+    Main v3 installed reports; Evidence v3 installed due_date and v4 events.
+    Recheck due_date for main-v3 databases, and reports for Evidence-v4 databases,
+    before schema.sql runs. Both operations preserve existing rows and values.
+    """
+    _ensure_rent_record_due_date(conn)
+    _ensure_report_tables(conn)
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
     3: _ensure_rent_record_due_date,
     4: _ensure_evidence_events,
+    5: _ensure_integrated_schema,
 }
 
 
