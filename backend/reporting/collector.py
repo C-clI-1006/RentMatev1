@@ -14,8 +14,8 @@ Scope of this round:
 - No report-level judgement: the collector does NOT decide whether the
   whole report is generated (no ``ReportOutcome``). It only preserves
   each section's own availability (AVAILABLE / EMPTY / NOT_AVAILABLE)
-  and its unavailability note, so EMPTY ("本周期无记录") and
-  NOT_AVAILABLE ("数据不可用") stay distinct all the way downstream.
+  and its unavailability note, so EMPTY ("no records this period") and
+  NOT_AVAILABLE ("data unavailable") stay distinct all the way downstream.
 
 Failure handling: the contract says a source encodes data-level
 problems in the section availability and "must not raise". As a

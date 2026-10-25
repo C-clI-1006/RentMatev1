@@ -1,4 +1,4 @@
-# Kerwin's maintenance demo / 演示操作稿
+# Kerwin's Maintenance Demonstration Guide
 
 ## Before demonstration
 

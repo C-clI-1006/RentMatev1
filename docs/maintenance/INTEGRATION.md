@@ -1,4 +1,4 @@
-# Maintenance integration handover / 维修模块联调
+# Maintenance Integration Handover
 
 Owner: Member 2 Kerwin. Scope: UC3, UC1 intake, maintenance events and UC7 summaries.
 Local module implementation and synthetic live-model acceptance are complete.
