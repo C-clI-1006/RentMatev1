@@ -274,6 +274,22 @@ CREATE TABLE IF NOT EXISTS tenant_inbox (
 CREATE INDEX IF NOT EXISTS idx_tenant_inbox_scope
     ON tenant_inbox (recipient_id, property_id, delivered_at);
 
+-- Manager alerts are a separate delivery boundary: they are authorised by
+-- manager_property and never enter the tenant inbox or draft-review path.
+CREATE TABLE IF NOT EXISTS manager_inbox (
+    event_id      TEXT NOT NULL,
+    recipient_id  TEXT NOT NULL REFERENCES manager(manager_id),
+    property_id   TEXT NOT NULL REFERENCES property(property_id),
+    content       TEXT NOT NULL,
+    delivered_at  TEXT NOT NULL,
+    PRIMARY KEY (event_id, recipient_id),
+    FOREIGN KEY (event_id, recipient_id)
+        REFERENCES notification_event(event_id, recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manager_inbox_scope
+    ON manager_inbox (recipient_id, property_id, delivered_at);
+
 -- ---------------------------------------------------------------------------
 -- Evidence documents (owned: evidence — SCRUM-8)
 -- Conventions: upload / classification / association are SEPARATE state

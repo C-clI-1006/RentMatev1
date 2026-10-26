@@ -17,7 +17,7 @@ from reporting.api import require_scheduler
 from shared import AuthContext
 from shared.sqlite import init_connection
 
-from .dispatcher import SQLiteTenantInboxAdapter, dispatch_pending
+from .dispatcher import SQLiteNotificationInboxAdapter, dispatch_pending
 
 
 router = APIRouter(prefix="/api/notifications", tags=["Tenant Notifications"])
@@ -94,7 +94,7 @@ def dispatch_notifications(
 ):
     results = dispatch_pending(
         connection,
-        SQLiteTenantInboxAdapter(connection),
+        SQLiteNotificationInboxAdapter(connection),
         limit=limit,
     )
     counts = {"delivered": 0, "pending_retry": 0, "failed": 0}

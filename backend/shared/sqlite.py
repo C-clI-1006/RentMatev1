@@ -36,7 +36,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _TENANT_INBOX_DDL = """
 CREATE TABLE IF NOT EXISTS tenant_inbox (
@@ -51,6 +51,21 @@ CREATE TABLE IF NOT EXISTS tenant_inbox (
 );
 CREATE INDEX IF NOT EXISTS idx_tenant_inbox_scope
     ON tenant_inbox(recipient_id,property_id,delivered_at);
+"""
+
+_MANAGER_INBOX_DDL = """
+CREATE TABLE IF NOT EXISTS manager_inbox (
+    event_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL REFERENCES manager(manager_id),
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    content TEXT NOT NULL,
+    delivered_at TEXT NOT NULL,
+    PRIMARY KEY(event_id,recipient_id),
+    FOREIGN KEY(event_id,recipient_id)
+        REFERENCES notification_event(event_id,recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_manager_inbox_scope
+    ON manager_inbox(recipient_id,property_id,delivered_at);
 """
 
 # v4: receipt, timeline entry and document links are committed together.
@@ -324,6 +339,11 @@ def _ensure_v8_communication_maintenance_receipts(conn: Connection) -> None:
     conn.executescript(_COMMUNICATION_MAINTENANCE_RECEIPT_DDL)
 
 
+def _ensure_v9_manager_inbox(conn: Connection) -> None:
+    """Add the role-specific durable manager-alert sink."""
+    conn.executescript(_MANAGER_INBOX_DDL)
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
@@ -333,6 +353,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     6: _ensure_v6_tenant_inbox,
     7: _ensure_v7_opaque_draft_request_reference,
     8: _ensure_v8_communication_maintenance_receipts,
+    9: _ensure_v9_manager_inbox,
 }
 
 

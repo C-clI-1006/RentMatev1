@@ -18,7 +18,7 @@ class DeliveryAdapter(Protocol):
 
     Implementations must deduplicate on ``event_id`` and ``recipient_id`` so a
     crash after the external send but before the local commit cannot duplicate
-    a tenant-facing message.
+    a recipient-facing message.
     """
 
     def deliver(
@@ -52,12 +52,16 @@ class SQLiteTenantInboxAdapter:
         content: str,
     ) -> None:
         event = self._connection.execute(
-            "SELECT payload FROM notification_event "
+            "SELECT kind,payload FROM notification_event "
             "WHERE event_id=? AND recipient_id=?",
             (event_id, recipient_id),
         ).fetchone()
         if event is None:
             raise PermanentDeliveryError("notification event not found")
+        if NotificationKind(event["kind"]) is NotificationKind.MANAGER_ALERT:
+            raise PermanentDeliveryError(
+                "manager alerts require the manager delivery adapter"
+            )
         try:
             property_id = json.loads(event["payload"])["property_id"]
         except (json.JSONDecodeError, KeyError, TypeError) as error:
@@ -79,6 +83,91 @@ class SQLiteTenantInboxAdapter:
                 raise PermanentDeliveryError(
                     "tenant inbox key was reused with different content"
                 )
+
+
+class SQLiteManagerInboxAdapter:
+    """Durable, idempotent prototype transport for authorised managers."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def deliver(
+        self,
+        *,
+        event_id: str,
+        recipient_id: str,
+        content: str,
+    ) -> None:
+        event = self._connection.execute(
+            "SELECT kind,payload FROM notification_event "
+            "WHERE event_id=? AND recipient_id=?",
+            (event_id, recipient_id),
+        ).fetchone()
+        if event is None:
+            raise PermanentDeliveryError("notification event not found")
+        if NotificationKind(event["kind"]) is not NotificationKind.MANAGER_ALERT:
+            raise PermanentDeliveryError(
+                "tenant notifications require the tenant delivery adapter"
+            )
+        try:
+            property_id = json.loads(event["payload"])["property_id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            raise PermanentDeliveryError("delivery property is missing") from error
+        now = _iso(utcnow())
+        inserted = self._connection.execute(
+            "INSERT OR IGNORE INTO manager_inbox "
+            "(event_id,recipient_id,property_id,content,delivered_at) "
+            "VALUES (?,?,?,?,?)",
+            (event_id, recipient_id, property_id, content, now),
+        )
+        if inserted.rowcount == 0:
+            existing = self._connection.execute(
+                "SELECT property_id,content FROM manager_inbox "
+                "WHERE event_id=? AND recipient_id=?",
+                (event_id, recipient_id),
+            ).fetchone()
+            if existing is None or tuple(existing) != (property_id, content):
+                raise PermanentDeliveryError(
+                    "manager inbox key was reused with different content"
+                )
+
+
+class SQLiteNotificationInboxAdapter:
+    """Route each event to its role-specific durable prototype transport."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+        self._tenant = SQLiteTenantInboxAdapter(connection)
+        self._manager = SQLiteManagerInboxAdapter(connection)
+
+    def deliver(
+        self,
+        *,
+        event_id: str,
+        recipient_id: str,
+        content: str,
+    ) -> None:
+        event = self._connection.execute(
+            "SELECT kind FROM notification_event "
+            "WHERE event_id=? AND recipient_id=?",
+            (event_id, recipient_id),
+        ).fetchone()
+        if event is None:
+            raise PermanentDeliveryError("notification event not found")
+        try:
+            kind = NotificationKind(event["kind"])
+        except ValueError as error:
+            raise PermanentDeliveryError("invalid notification kind") from error
+        adapter = (
+            self._manager
+            if kind is NotificationKind.MANAGER_ALERT
+            else self._tenant
+        )
+        adapter.deliver(
+            event_id=event_id,
+            recipient_id=recipient_id,
+            content=content,
+        )
 
 
 def dispatch_one(
@@ -190,6 +279,67 @@ def dispatch_pending(
 def _authorised_payload(connection: sqlite3.Connection, row: sqlite3.Row) -> dict:
     try:
         payload = json.loads(row["payload"])
+        property_id = payload["property_id"]
+        kind = NotificationKind(row["kind"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise PermanentDeliveryError("invalid notification payload") from error
+    if not isinstance(payload, dict) or not isinstance(property_id, str):
+        raise PermanentDeliveryError("invalid notification payload")
+
+    if kind is NotificationKind.MANAGER_ALERT:
+        return _authorised_manager_alert_payload(connection, row, payload)
+    return _authorised_tenant_payload(connection, row, payload, kind)
+
+
+def _authorised_manager_alert_payload(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: dict,
+) -> dict:
+    """Validate an emergency manager alert without tenant-draft fields."""
+
+    property_id = payload["property_id"]
+    message_id = payload.get("message_id")
+    if (
+        not isinstance(message_id, str)
+        or not message_id.strip()
+        or row["message_id"] != message_id
+        or payload.get("emergency") is not True
+    ):
+        raise PermanentDeliveryError("invalid manager alert payload")
+
+    source = connection.execute(
+        "SELECT property_id FROM message WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    if source is None or source["property_id"] != property_id:
+        raise PermanentDeliveryError("manager alert source could not be verified")
+
+    authorised = connection.execute(
+        "SELECT 1 FROM manager_property WHERE manager_id=? AND property_id=?",
+        (row["recipient_id"], property_id),
+    ).fetchone()
+    if authorised is None:
+        raise PermanentDeliveryError("recipient is no longer authorised for property")
+
+    return {
+        **payload,
+        "content": (
+            f"Emergency alert for property {property_id} "
+            f"(source message {message_id})."
+        ),
+    }
+
+
+def _authorised_tenant_payload(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: dict,
+    kind: NotificationKind,
+) -> dict:
+    """Validate approved or deterministic tenant-facing notifications."""
+
+    try:
         content = payload["content"]
         property_id = payload["property_id"]
         draft_id = payload["draft_id"]
@@ -205,7 +355,6 @@ def _authorised_payload(connection: sqlite3.Connection, row: sqlite3.Row) -> dic
         "WHERE r.draft_id=? AND r.draft_version=? AND r.decision='approved'",
         (draft_id, draft_version),
     ).fetchone()
-    kind = NotificationKind(row["kind"])
     approved = (
         approval is not None
         and approval["status"] in ("approved", "sent")
@@ -239,16 +388,10 @@ def _authorised_payload(connection: sqlite3.Connection, row: sqlite3.Row) -> dic
     if not approved and not auto_eligible_maintenance:
         raise PermanentDeliveryError("approved or eligible draft version could not be verified")
 
-    if kind is NotificationKind.MANAGER_ALERT:
-        authorised = connection.execute(
-            "SELECT 1 FROM manager_property WHERE manager_id=? AND property_id=?",
-            (row["recipient_id"], property_id),
-        ).fetchone()
-    else:
-        authorised = connection.execute(
-            "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
-            (row["recipient_id"], property_id),
-        ).fetchone()
+    authorised = connection.execute(
+        "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
+        (row["recipient_id"], property_id),
+    ).fetchone()
     if authorised is None:
         raise PermanentDeliveryError("recipient is no longer authorised for property")
     return payload

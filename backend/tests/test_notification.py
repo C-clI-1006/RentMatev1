@@ -10,6 +10,7 @@ from notification import (
     NotificationConflictError,
     PermanentDeliveryError,
     RetryableDeliveryError,
+    SQLiteNotificationInboxAdapter,
     SQLiteNotificationService,
     dispatch_one,
 )
@@ -65,6 +66,30 @@ class RecordingAdapter:
 def approve(db):
     return ReviewService(db, AuthContext("t1", "p1", "m1")).decide(
         "d1", expected_version=1, decision=ReviewDecision.APPROVED
+    )
+
+
+def queue_manager_alert(db):
+    db.execute(
+        "INSERT INTO message "
+        "(message_id,tenant_id,property_id,content,message_type,received_at) "
+        "VALUES ('message-emergency','t1','p1','Gas leak','maintenance',?)",
+        (TS,),
+    )
+    db.commit()
+    return SQLiteNotificationService(db).publish(
+        NotificationEvent(
+            event_id=EventId("alert:message-emergency"),
+            recipient_id=RecipientId("m1"),
+            kind=NotificationKind.MANAGER_ALERT,
+            message_id="message-emergency",
+            payload={
+                "property_id": "p1",
+                "message_id": "message-emergency",
+                "emergency": True,
+            },
+            created_at=utcnow(),
+        )
     )
 
 
@@ -124,6 +149,54 @@ def test_dispatch_rechecks_property_binding(db):
         "SELECT status,attempts FROM notification_event WHERE event_id='draft:d1:v1'"
     ).fetchone()
     assert tuple(row) == ("failed", 1)
+
+
+def test_manager_alert_dispatches_without_tenant_draft_fields(db):
+    queue_manager_alert(db)
+    delivered = dispatch_one(
+        db,
+        "alert:message-emergency",
+        "m1",
+        SQLiteNotificationInboxAdapter(db),
+    )
+    assert delivered.status.value == "delivered"
+    assert delivered.attempts == 1
+    row = db.execute(
+        "SELECT property_id,content FROM manager_inbox "
+        "WHERE event_id='alert:message-emergency' AND recipient_id='m1'"
+    ).fetchone()
+    assert tuple(row) == (
+        "p1",
+        "Emergency alert for property p1 (source message message-emergency).",
+    )
+    assert db.execute("SELECT count(*) FROM tenant_inbox").fetchone()[0] == 0
+
+
+def test_manager_alert_dispatch_rejects_removed_binding(db):
+    queue_manager_alert(db)
+    db.execute(
+        "DELETE FROM manager_property WHERE manager_id='m1' AND property_id='p1'"
+    )
+    db.commit()
+    result = dispatch_one(
+        db,
+        "alert:message-emergency",
+        "m1",
+        SQLiteNotificationInboxAdapter(db),
+    )
+    assert result.status.value == "failed"
+    assert result.detail == "recipient is no longer authorised for property"
+    assert db.execute("SELECT count(*) FROM manager_inbox").fetchone()[0] == 0
+
+
+def test_manager_alert_dispatch_is_idempotent(db):
+    queue_manager_alert(db)
+    adapter = SQLiteNotificationInboxAdapter(db)
+    first = dispatch_one(db, "alert:message-emergency", "m1", adapter)
+    replay = dispatch_one(db, "alert:message-emergency", "m1", adapter)
+    assert first.status.value == replay.status.value == "delivered"
+    assert first.attempts == replay.attempts == 1
+    assert db.execute("SELECT count(*) FROM manager_inbox").fetchone()[0] == 1
 
 
 def test_publish_is_idempotent_and_rejects_conflicting_reuse(db):

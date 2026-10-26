@@ -238,7 +238,7 @@ def test_init_connection_upgrades_legacy_db_to_due_date(tmp_path):
 
     # 3. The manager and due-date migrations remain ordered, followed by
     #    the Evidence event receipt/timeline tables in v4.
-    assert SCHEMA_VERSION == 8
+    assert SCHEMA_VERSION == 9
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # 4. The migration chain that predated this step is untouched.
@@ -558,7 +558,7 @@ def test_divergent_migration_histories_converge_without_data_loss(tmp_path, bran
             assert (
                 upgraded.execute("PRAGMA user_version").fetchone()[0]
                 == SCHEMA_VERSION
-                == 8
+                == 9
             )
             assert _rent_rows(upgraded) == before
             assert (
@@ -722,7 +722,7 @@ def test_v7_decouples_draft_from_legacy_maintenance_storage(tmp_path):
 
     upgraded = init_connection(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 9
         assert not any(
             row[3] == "request_id"
             for row in upgraded.execute("PRAGMA foreign_key_list(draft)")
