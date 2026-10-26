@@ -26,27 +26,76 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 
 # Load backend/.env before importing business modules that read env
 # config (evidence wiring, llm adapter) and before the service is built.
 load_dotenv(Path(__file__).with_name(".env"))
 
-from maintenance.api import router as maintenance_router  # noqa: E402
-from review.api import router as review_router  # noqa: E402
-from reporting.api import router as reporting_router  # noqa: E402
-from reporting.manager_api import router as manager_reporting_router  # noqa: E402
-
+from communication.api import ops_router as communication_ops_router  # noqa: E402
+from communication.api import router as communication_router  # noqa: E402
 from evidence.router import build_evidence_service, router as evidence_router  # noqa: E402
 from llm.classify import IDocumentClassifier  # noqa: E402
+from maintenance.api import router as maintenance_router  # noqa: E402
+from notification.api import ops_router as notification_ops_router  # noqa: E402
+from notification.api import router as notification_router  # noqa: E402
+from review.api import router as review_router  # noqa: E402
+from reporting.api import require_scheduler, router as reporting_router  # noqa: E402
+from reporting.manager_api import router as manager_reporting_router  # noqa: E402
 
 _DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "rentmate.db")
 _DEFAULT_STORAGE_ROOT = os.path.join(os.path.dirname(__file__), "evidence_storage")
+_DEMO_PAGE = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+
+
+ops_router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# UC4/UC5 scheduled job entry (overdue rent reminders / lease deadlines).
+#
+# The job logic lives in the lease_rent module (owner: Ziheng); this file
+# only provides the trigger. Until an auto-scheduler is wired in, the
+# endpoint is the manual trigger (ops / demo use). The lease_rent module
+# must keep the run idempotent: a second run at the same `now` must not
+# create duplicate alerts or drafts (dedup via stable event_id /
+# source_id, see db/schema.sql).
+# ---------------------------------------------------------------------------
+@ops_router.post(
+    "/api/ops/rent-alerts/run",
+    dependencies=[Depends(require_scheduler)],
+)
+def run_rent_alerts(request: Request, now: str | None = None) -> dict:
+    """Trigger the rent alert scan. `now` is an optional ISO-8601 UTC
+    override (demo/test); omitted means current UTC time.
+
+    The same trusted scheduler credential used by monthly reporting is
+    required; ordinary callers cannot impersonate the scheduler."""
+    from datetime import datetime, timezone
+
+    try:
+        from lease_rent.service import run_due_alerts  # deferred import
+    except ImportError:
+        raise HTTPException(
+            status_code=503, detail="lease_rent.run_due_alerts not implemented yet"
+        )
+
+    try:
+        now_dt = (
+            datetime.now(timezone.utc)
+            if now is None
+            else datetime.fromisoformat(now.replace("Z", "+00:00"))
+        )
+        return run_due_alerts(now=now_dt, db_path=request.app.state.db_path)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 def create_app(
-    db_path: str | None = None, storage_root: str | None = None,
-    *, classifier: IDocumentClassifier | None = None,
+    db_path: str | None = None,
+    storage_root: str | None = None,
+    *,
+    classifier: IDocumentClassifier | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with all currently mounted routers.
 
@@ -58,12 +107,18 @@ def create_app(
 
     db_path = db_path or os.environ.get("DATABASE_PATH", _DEFAULT_DB_PATH)
     storage_root = storage_root or os.environ.get("EVIDENCE_STORAGE_ROOT", _DEFAULT_STORAGE_ROOT)
+    app.state.db_path = db_path
 
     # Maintenance + review routers (prefixes live on the routers).
     app.include_router(maintenance_router)
     app.include_router(review_router)
     app.include_router(reporting_router)
     app.include_router(manager_reporting_router)
+    app.include_router(ops_router)
+    app.include_router(notification_router)
+    app.include_router(notification_ops_router)
+    app.include_router(communication_router)
+    app.include_router(communication_ops_router)
 
     # Evidence uses server-side Bearer identities, tenant_property reads,
     # and manager_property authorization for independent manager reviews.
@@ -74,36 +129,9 @@ def create_app(
     def health() -> dict:
         return {"status": "ok"}
 
-    # -------------------------------------------------------------------
-    # UC5 scheduled job entry (rent due reminders / overdue alerts).
-    #
-    # The job logic lives in the lease_rent module (owner: Ziheng); this
-    # file only provides the trigger. Until an auto-scheduler is wired
-    # in, the endpoint is the manual trigger (ops / demo use). The
-    # lease_rent module must keep the run idempotent: a second run at
-    # the same `now` must not create duplicate alerts or drafts (dedup
-    # via stable event_id / source_id, see db/schema.sql).
-    # -------------------------------------------------------------------
-    @app.post("/api/ops/rent-alerts/run")
-    def run_rent_alerts(now: str | None = None) -> dict:
-        """Trigger the rent alert scan. `now` is an optional ISO-8601 UTC
-        override (demo/test); omitted means current UTC time.
-
-        Returns 503 until the lease_rent module implements
-        `run_due_alerts` (owner: Ziheng)."""
-        from datetime import datetime, timezone
-
-        try:
-            from lease_rent.service import run_due_alerts  # deferred import
-        except ImportError:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=503, detail="lease_rent.run_due_alerts not implemented yet"
-            )
-
-        now_dt = datetime.now(timezone.utc) if now is None else datetime.fromisoformat(now)
-        return run_due_alerts(now=now_dt)
+    @app.get("/demo", include_in_schema=False)
+    def integrated_demo():
+        return FileResponse(_DEMO_PAGE)
 
     return app
 

@@ -14,6 +14,7 @@ from .fact_query import LeaseRentFactRepository
 from .models import (
     LeaseDeadlineAlertCandidate,
     LeaseDeadlineInput,
+    LeaseRentSourceScope,
     RentRecordInput,
     VerifiedFactRecord,
 )
@@ -37,6 +38,81 @@ class SQLiteLeaseRentRepository(LeaseRentFactRepository):
             (tenant_id, property_id),
         ).fetchone()
         return row is not None
+
+    def resolve_source_scope(
+        self, *, source_type: str, source_id: str
+    ) -> LeaseRentSourceScope | None:
+        """Resolve a source ID to its authoritative tenant/property scope.
+
+        This is the public cross-module lookup for evidence association,
+        manager-review scoping and scheduled draft preparation. Callers must
+        not accept a property ID from the request and assume that it belongs
+        to the supplied record ID.
+
+        A rent row redundantly stores ``property_id`` for efficient monthly
+        reporting. The value must agree with its parent lease; disagreement
+        is conflicting source data rather than a reason to silently choose
+        either value.
+        """
+
+        if source_type == "lease":
+            rows = self._rows(
+                "SELECT lease_id, tenant_id, property_id FROM lease "
+                "WHERE lease_id = ?",
+                (source_id,),
+            )
+            if not rows:
+                return None
+            row = rows[0]
+            return LeaseRentSourceScope(
+                source_type="lease",
+                source_id=str(row["lease_id"]),
+                lease_id=str(row["lease_id"]),
+                tenant_id=str(row["tenant_id"]),
+                property_id=str(row["property_id"]),
+            )
+
+        if source_type == "rent_record":
+            rows = self._rows(
+                "SELECT r.rent_record_id, r.lease_id, r.property_id AS rent_property_id, "
+                "l.property_id AS lease_property_id, l.tenant_id "
+                "FROM rent_record r JOIN lease l ON l.lease_id = r.lease_id "
+                "WHERE r.rent_record_id = ?",
+                (source_id,),
+            )
+            if not rows:
+                return None
+            row = rows[0]
+            if row["rent_property_id"] != row["lease_property_id"]:
+                raise LeaseRentDataError(
+                    "rent record "
+                    f"{source_id} property conflicts with its parent lease"
+                )
+            return LeaseRentSourceScope(
+                source_type="rent_record",
+                source_id=str(row["rent_record_id"]),
+                lease_id=str(row["lease_id"]),
+                tenant_id=str(row["tenant_id"]),
+                property_id=str(row["lease_property_id"]),
+            )
+
+        raise ValueError("source_type must be 'lease' or 'rent_record'")
+
+    def source_belongs_to_property(
+        self, *, source_type: str, source_id: str, property_id: str
+    ) -> bool:
+        """Return whether a source exists in the requested property scope.
+
+        ``False`` deliberately covers both an unknown record and a record in
+        another property, so an unauthorised caller cannot use this predicate
+        as a cross-property existence oracle.
+        """
+
+        scope = self.resolve_source_scope(
+            source_type=source_type,
+            source_id=source_id,
+        )
+        return scope is not None and scope.property_id == property_id
 
     def find_facts(
         self,

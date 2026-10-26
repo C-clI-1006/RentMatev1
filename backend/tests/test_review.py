@@ -75,7 +75,16 @@ def test_approval_binds_exact_version_and_edited_content(db):
         "SELECT decision,final_content FROM review WHERE draft_id='d1'"
     ).fetchone()
     assert tuple(stored) == ("approved", "The manager-approved exact reply.")
-    assert db.execute("SELECT count(*) FROM notification_event").fetchone()[0] == 0
+    notification = db.execute(
+        "SELECT event_id,recipient_id,status,payload FROM notification_event"
+    ).fetchone()
+    assert tuple(notification[:3]) == ("draft:d1:v2", "t1", "accepted")
+    assert json.loads(notification["payload"]) == {
+        "property_id": "p1",
+        "draft_id": "d1",
+        "draft_version": 2,
+        "content": "The manager-approved exact reply.",
+    }
     assert db.execute(
         "SELECT 1 FROM audit WHERE action='review.approved' AND subject_id='d1'"
     ).fetchone()
@@ -143,6 +152,14 @@ def test_system_rent_reminder_resolves_property_scope(db):
     item = service(db).get_pending("rent-draft")
     assert item.property_id == "p1"
     assert item.original_message is None
+    service(db).decide(
+        "rent-draft", expected_version=1, decision=ReviewDecision.APPROVED
+    )
+    queued = db.execute(
+        "SELECT recipient_id,kind,status FROM notification_event "
+        "WHERE event_id='draft:rent-draft:v1'"
+    ).fetchone()
+    assert tuple(queued) == ("t1", "lease_rent_reply", "accepted")
 
 
 def test_review_api_auth_scope_and_decision(db, monkeypatch):

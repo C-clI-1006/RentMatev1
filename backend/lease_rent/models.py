@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
+from typing import Literal
 
 
 class RentStatus(str, Enum):
@@ -92,6 +93,23 @@ class LeaseDeadlineAlertCandidate:
     end_date: date
     remaining_days: int
     prepared_on: date
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseRentSourceScope:
+    """Authoritative property scope for a lease/rent source record.
+
+    Cross-module callers use this resolved value instead of trusting a
+    property identifier supplied alongside a record ID. A rent record also
+    carries its parent lease ID so consumers can retain the relationship in
+    evidence and audit metadata.
+    """
+
+    source_type: Literal["lease", "rent_record"]
+    source_id: str
+    lease_id: str
+    tenant_id: str
+    property_id: str
 
 
 @dataclass(frozen=True, slots=True)

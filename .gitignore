@@ -29,6 +29,8 @@ dist/
 build/
 .next/
 coverage/
+.runtime/
+.runtime-*/
 
 # OS / editor
 .DS_Store

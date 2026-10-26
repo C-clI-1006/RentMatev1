@@ -36,7 +36,22 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
+
+_TENANT_INBOX_DDL = """
+CREATE TABLE IF NOT EXISTS tenant_inbox (
+    event_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    content TEXT NOT NULL,
+    delivered_at TEXT NOT NULL,
+    PRIMARY KEY(event_id,recipient_id),
+    FOREIGN KEY(event_id,recipient_id)
+        REFERENCES notification_event(event_id,recipient_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_inbox_scope
+    ON tenant_inbox(recipient_id,property_id,delivered_at);
+"""
 
 # v4: receipt, timeline entry and document links are committed together.
 _EVIDENCE_EVENT_DDL = """
@@ -120,6 +135,11 @@ def _ensure_manager_tables(conn: Connection) -> None:
     conn.executescript(_MANAGER_TABLE_DDL)
 
 
+def _ensure_report_tables(conn: Connection) -> None:
+    """Ensure reporting-owned snapshot persistence exists."""
+    conn.executescript(_REPORT_TABLE_DDL)
+
+
 # Migration step for v3: rent_record.due_date.
 #
 # Pre-existing databases created before due_date was added have a
@@ -161,28 +181,158 @@ def _ensure_rent_record_due_date(conn: Connection) -> None:
         conn.execute("ALTER TABLE rent_record ADD COLUMN due_date TEXT")
 
 
-def _ensure_report_tables(conn: Connection) -> None:
-    """Retain main's reporting snapshot migration without rewriting report rows."""
-    conn.executescript(_REPORT_TABLE_DDL)
+def _ensure_v3_lease_and_reports(conn: Connection) -> None:
+    """Resolve the two historical v3 candidates idempotently.
 
-
-def _ensure_integrated_schema(conn: Connection) -> None:
-    """v5 convergence for the two historical meanings of user_version=3.
-
-    Main v3 installed reports; Evidence v3 installed due_date and v4 events.
-    Recheck due_date for main-v3 databases, and reports for Evidence-v4 databases,
-    before schema.sql runs. Both operations preserve existing rows and values.
+    PR #8 used v3 for ``rent_record.due_date`` while PR #11 used v3 for
+    reporting persistence. Running both guards makes upgrades safe no matter
+    which candidate a developer database previously exercised.
     """
     _ensure_rent_record_due_date(conn)
     _ensure_report_tables(conn)
 
 
+def _ensure_v4_integrations(conn: Connection) -> None:
+    """Ensure all PR #8/#11 integration objects through schema v4."""
+    _ensure_rent_record_due_date(conn)
+    _ensure_report_tables(conn)
+    _ensure_evidence_events(conn)
+
+
+def _ensure_v5_reconciliation(conn: Connection) -> None:
+    """Reconcile databases already stamped by either pre-merge branch."""
+    _ensure_v4_integrations(conn)
+
+
+def _ensure_v6_tenant_inbox(conn: Connection) -> None:
+    """Add the durable prototype delivery sink for existing databases."""
+    _ensure_v5_reconciliation(conn)
+    conn.executescript(_TENANT_INBOX_DDL)
+
+
+_DRAFT_V7_DDL = """
+CREATE TABLE draft_v7 (
+    draft_id      TEXT PRIMARY KEY,
+    message_id    TEXT REFERENCES message(message_id),
+    request_id    TEXT,
+    source_kind   TEXT,
+    source_id     TEXT,
+    version       INTEGER NOT NULL DEFAULT 1,
+    audience      TEXT NOT NULL DEFAULT 'tenant',
+    content       TEXT NOT NULL,
+    tone_hint     TEXT,
+    review_reason TEXT,
+    source_facts  TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending_review',
+    created_at    TEXT NOT NULL
+)
+"""
+
+
+def _ensure_v7_opaque_draft_request_reference(conn: Connection) -> None:
+    """Decouple Communication drafts from the legacy maintenance table.
+
+    ``request_id`` is an identifier crossing a module boundary, not a foreign
+    key into another module's private storage. The real Maintenance service
+    persists requests in ``mc_request``; retaining the old FK made a successful
+    intake fail when Communication tried to persist its grounded reply draft.
+
+    A fresh database has no draft table at migration time (schema.sql runs
+    afterwards), so there is nothing to rebuild. Existing databases are
+    rebuilt transactionally with foreign-key enforcement temporarily disabled;
+    dependent review rows continue to reference the replacement ``draft``
+    table after it is renamed.
+    """
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='draft'"
+    ).fetchone()
+    if table is None:
+        return
+
+    # Already upgraded (useful when a database was stamped inconsistently).
+    request_fk = next(
+        (
+            row
+            for row in conn.execute("PRAGMA foreign_key_list(draft)")
+            if row[3] == "request_id"
+        ),
+        None,
+    )
+    if request_fk is None:
+        return
+
+    conn.commit()
+    foreign_keys_were_enabled = bool(
+        conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    )
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(_DRAFT_V7_DDL)
+        conn.execute(
+            "INSERT INTO draft_v7 (draft_id,message_id,request_id,source_kind,"
+            "source_id,version,audience,content,tone_hint,review_reason,"
+            "source_facts,status,created_at) "
+            "SELECT draft_id,message_id,request_id,source_kind,source_id,"
+            "version,audience,content,tone_hint,review_reason,source_facts,"
+            "status,created_at FROM draft"
+        )
+        conn.execute("DROP TABLE draft")
+        conn.execute("ALTER TABLE draft_v7 RENAME TO draft")
+        conn.execute("CREATE INDEX idx_draft_message ON draft(message_id)")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_draft_source ON draft(source_id) "
+            "WHERE source_id IS NOT NULL"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if foreign_keys_were_enabled:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(
+            "draft request-reference migration left foreign-key violations: "
+            f"{violations}"
+        )
+
+
+_COMMUNICATION_MAINTENANCE_RECEIPT_DDL = """
+CREATE TABLE IF NOT EXISTS communication_maintenance_receipt (
+    event_id       TEXT NOT NULL,
+    recipient_id   TEXT NOT NULL,
+    message_type   TEXT NOT NULL,
+    source_id      TEXT NOT NULL UNIQUE,
+    request_id     TEXT NOT NULL,
+    tenant_id      TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    payload        TEXT NOT NULL,
+    draft_id       TEXT NOT NULL REFERENCES draft(draft_id),
+    received_at    TEXT NOT NULL,
+    PRIMARY KEY (event_id, recipient_id, message_type)
+);
+CREATE INDEX IF NOT EXISTS idx_communication_maintenance_request
+    ON communication_maintenance_receipt(property_id,request_id,received_at);
+"""
+
+
+def _ensure_v8_communication_maintenance_receipts(conn: Connection) -> None:
+    """Add durable, replay-safe Maintenance -> Communication receipts."""
+    conn.executescript(_COMMUNICATION_MAINTENANCE_RECEIPT_DDL)
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
-    3: _ensure_rent_record_due_date,
-    4: _ensure_evidence_events,
-    5: _ensure_integrated_schema,
+    3: _ensure_v3_lease_and_reports,
+    4: _ensure_v4_integrations,
+    5: _ensure_v5_reconciliation,
+    6: _ensure_v6_tenant_inbox,
+    7: _ensure_v7_opaque_draft_request_reference,
+    8: _ensure_v8_communication_maintenance_receipts,
 }
 
 
