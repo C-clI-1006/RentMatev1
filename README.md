@@ -9,23 +9,23 @@ This repository holds the Stage 2 implementation. Stage 1 design deliverables
 
 ## Status
 
-Maintenance Coordinator implementation (Kerwin) is now available, with a
-standalone module demo, authenticated API, SQLite persistence and tests.
-See `backend/maintenance/README.md`; on this Windows machine run
-`Start-Maintenance.cmd`. Other business modules and React remain skeletons.
-The maintenance module uses its own `mc_*` tables while shared-schema review
-is pending. Live Qwen is configured via environment; unavailable inference
-requires manual review rather than silent test-double fallback.
+The integration candidate contains working Maintenance, Lease/Rent, Evidence,
+Manager Review, Reporting and Notification modules on one FastAPI/SQLite
+application. The UC4/UC5 path is executable end to end: scheduled checks make
+idempotent review drafts, a manager approves or rejects an exact version, the
+single dispatcher records truthful delivery outcomes, and the tenant reads a
+property-scoped inbox. Evidence/Maintenance events and monthly reporting are
+mounted in the same application.
 
-- Skeleton: shared monorepo layout, shared contracts draft, SQLite schema draft.
-- Contracts in `backend/contracts/` are a **draft for team review**.
-  The four demo-relevant outcomes (registered / needs clarification / failed,
-  and truthful delivery status) must stay stable.
+Run `Start-RentMate.cmd` for the integrated local demonstration. The older
+`Start-Maintenance.cmd` remains available for the standalone Maintenance demo.
+Live Qwen is configured through the environment; unavailable inference fails
+closed or enters manual review rather than silently pretending success.
 
-## Stack (proposal — pending team confirmation)
+## Stack
 
 - Backend: Python 3.11+, FastAPI, SQLite (modular monolith, no microservices)
-- Frontend: React (placeholder, owned by the team)
+- Frontend: no-build integrated demo console; API boundary supports a later React client
 - LLM: school Qwen proxy via a single `backend/llm/` adapter; labelled test
   doubles are used until the proxy connection is confirmed.
 
@@ -40,7 +40,7 @@ backend/
   evidence/      Evidence upload, event consumption (owner: Jenny)
   reporting/     Monthly reports, summaries (owner: Sharon)
   llm/           Single LLM adapter (config, validation, error conversion)
-  notification/  Delivery + outbox, single retry owner
+  notification/  Durable delivery outbox, dispatcher, retry and tenant inbox
   review/        Manager review/approval (approval bound to a draft version)
   repositories/  Persistence (SQLite)
   shared/        Cross-cutting helpers (auth context, IDs, time)
@@ -48,7 +48,7 @@ backend/
 db/
   schema.sql     SQLite schema draft
 frontend/
-  README.md      Placeholder — team to scaffold React app here
+  index.html     Integrated API demonstration console
 ```
 
 ## Integration rules (binding)
@@ -69,6 +69,17 @@ frontend/
 
 ## Getting started
 
+Windows demonstration (creates an ignored local virtual environment/database):
+
+```powershell
+.\Start-RentMate.ps1
+```
+
+Then open `http://127.0.0.1:8020/demo`. To run the complete automated suite
+instead of starting the server, use `.\Start-RentMate.ps1 -Verify`.
+
+Manual setup:
+
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
@@ -77,9 +88,8 @@ cp ../.env.example .env   # fill in LLM config when available
 uvicorn main:app --reload
 ```
 
-Database: maintenance creates its own `mc_*` tables on first API use. API
-startup also applies the shared schema/migrations so authenticated tenant and
-manager property bindings can be checked. Maintenance writes only `mc_*`.
+API startup applies the shared versioned schema/migrations. Maintenance keeps
+its aggregate in `mc_*`; other modules use their owned shared-schema tables.
 
 ## Ownership
 

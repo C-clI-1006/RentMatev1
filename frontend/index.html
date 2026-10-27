@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RentMate integrated demo</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, Segoe UI, sans-serif; color: #172033; background: #f4f6fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { padding: 26px max(24px, calc((100% - 1120px)/2)); color: white; background: #263a76; }
+    header h1 { margin: 0 0 6px; font-size: 28px; }
+    header p { margin: 0; color: #dce4ff; }
+    main { max-width: 1120px; margin: 24px auto 48px; padding: 0 24px; }
+    .notice, section { background: white; border: 1px solid #dbe1ee; border-radius: 12px; box-shadow: 0 5px 16px #22345b12; }
+    .notice { padding: 14px 18px; margin-bottom: 18px; border-left: 5px solid #ef9b24; }
+    .credentials { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    section { padding: 20px; margin: 16px 0; }
+    h2 { margin: 0 0 8px; font-size: 20px; }
+    p { line-height: 1.5; }
+    label { display: block; font-size: 13px; font-weight: 650; }
+    input, textarea { width: 100%; margin-top: 5px; border: 1px solid #bdc7da; border-radius: 7px; padding: 9px; font: inherit; }
+    textarea { min-height: 82px; resize: vertical; }
+    button, .link { display: inline-block; border: 0; border-radius: 7px; padding: 9px 14px; margin: 5px 7px 5px 0; font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; }
+    button { color: white; background: #3158b5; }
+    button.secondary, .link { color: #24458d; background: #e8eefc; }
+    button.danger { background: #a73b4a; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .result { margin-top: 10px; padding: 10px 12px; min-height: 42px; white-space: pre-wrap; border-radius: 7px; background: #f3f5f9; color: #27334b; }
+    .review { margin-top: 12px; padding: 14px; border: 1px solid #dbe1ee; border-radius: 9px; }
+    .review small { color: #5d687d; }
+    .inbox-item { border-left: 4px solid #2b8a64; padding: 10px 12px; margin-top: 9px; background: #f0faf6; }
+    .flow { display: flex; flex-wrap: wrap; gap: 7px; color: #43516b; font-size: 14px; }
+    .flow span { padding: 6px 9px; border-radius: 99px; background: #edf1f8; }
+    @media (max-width: 760px) { .credentials { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RentMate integrated demo</h1>
+    <p>UC4/UC5 scheduled detection → manager review → durable delivery → tenant inbox</p>
+  </header>
+  <main>
+    <div class="notice"><strong>Local prototype only.</strong> The fixed tokens below are demo credentials created by <code>Start-RentMate.ps1</code>; never use them in deployment.</div>
+
+    <section>
+      <h2>Demo credentials</h2>
+      <div class="credentials">
+        <label>Scheduler token<input id="schedulerToken" value="scheduler-demo"></label>
+        <label>Manager token<input id="managerToken" value="manager-demo"></label>
+        <label>Tenant token<input id="tenantToken" value="tenant-demo"></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>1. Prepare overdue-rent and lease-deadline drafts</h2>
+      <p>The trusted scheduler reads persisted records and creates idempotent, traceable drafts. It does not send them.</p>
+      <button id="runAlerts">Run scheduled checks</button>
+      <div class="result" id="runResult">Not run yet.</div>
+    </section>
+
+    <section>
+      <h2>2. Manager review</h2>
+      <p>Only the exact approved draft version may enter the delivery queue. Rejected drafts are never sent.</p>
+      <button id="loadReviews">Load pending reviews</button>
+      <div id="reviews" class="result">No reviews loaded.</div>
+    </section>
+
+    <section>
+      <h2>3. Dispatch approved messages</h2>
+      <p>The dispatcher is the single retry owner. Accepted means queued; only a durable inbox write becomes delivered.</p>
+      <button id="dispatch">Dispatch notifications</button>
+      <div class="result" id="dispatchResult">Not dispatched yet.</div>
+    </section>
+
+    <section>
+      <h2>4. Tenant inbox</h2>
+      <button id="loadInbox">Load delivered messages</button>
+      <div id="inbox" class="result">No messages loaded.</div>
+    </section>
+
+    <section>
+      <h2>Other integrated modules</h2>
+      <div class="flow">
+        <span>Maintenance</span><span>Evidence</span><span>Review</span>
+        <span>Lease &amp; rent</span><span>Reporting</span><span>Notification</span>
+      </div>
+      <p>
+        <a class="link" href="/api/maintenance/demo">Maintenance demo</a>
+        <a class="link" href="/docs">Interactive API documentation</a>
+        <a class="link" href="/health">Health check</a>
+      </p>
+    </section>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const auth = token => ({Authorization: `Bearer ${token}`});
+    const show = (id, value) => { $(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); };
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const text = await response.text();
+      let data;
+      try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
+      if (!response.ok) throw new Error(`${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+      return data;
+    }
+
+    async function guarded(button, resultId, action) {
+      button.disabled = true;
+      try { show(resultId, await action()); }
+      catch (error) { show(resultId, `Error — ${error.message}`); }
+      finally { button.disabled = false; }
+    }
+
+    $('runAlerts').onclick = event => guarded(event.currentTarget, 'runResult', () =>
+      api(`/api/ops/rent-alerts/run?now=${encodeURIComponent(new Date().toISOString())}`, {
+        method: 'POST', headers: auth($('schedulerToken').value.trim())
+      })
+    );
+
+    $('loadReviews').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        const items = await api('/api/reviews', {headers: auth($('managerToken').value.trim())});
+        renderReviews(items);
+      } catch (error) { show('reviews', `Error — ${error.message}`); }
+      finally { button.disabled = false; }
+    };
+
+    function renderReviews(items) {
+      const host = $('reviews');
+      host.textContent = '';
+      if (!items.length) { host.textContent = 'No pending review items.'; return; }
+      for (const item of items) {
+        const card = document.createElement('div'); card.className = 'review';
+        const title = document.createElement('strong'); title.textContent = `${item.draft.source_kind || 'reply'} · ${item.reason}`;
+        const meta = document.createElement('small'); meta.textContent = `Draft ${item.draft.draft_id}, version ${item.draft.version}`;
+        const content = document.createElement('textarea'); content.value = item.draft.content;
+        const approve = document.createElement('button'); approve.textContent = 'Approve exact text';
+        const reject = document.createElement('button'); reject.textContent = 'Reject'; reject.className = 'danger';
+        approve.onclick = () => decide(item, 'approved', content.value, null, card);
+        reject.onclick = () => {
+          const reason = window.prompt('Rejection reason (required):');
+          if (reason && reason.trim()) decide(item, 'rejected', null, reason.trim(), card);
+        };
+        card.append(title, document.createElement('br'), meta, content, approve, reject);
+        host.append(card);
+      }
+    }
+
+    async function decide(item, decision, finalContent, reason, card) {
+      const body = {expected_version: item.draft.version, decision};
+      if (decision === 'approved') body.final_content = finalContent;
+      else body.reason = reason;
+      try {
+        const result = await api(`/api/reviews/${encodeURIComponent(item.draft.draft_id)}/decision`, {
+          method: 'POST', headers: {...auth($('managerToken').value.trim()), 'Content-Type': 'application/json'}, body: JSON.stringify(body)
+        });
+        card.textContent = `${decision}: ${result.draft_id} version ${result.draft_version}`;
+      } catch (error) { window.alert(error.message); }
+    }
+
+    $('dispatch').onclick = event => guarded(event.currentTarget, 'dispatchResult', () =>
+      api('/api/ops/notifications/dispatch', {method: 'POST', headers: auth($('schedulerToken').value.trim())})
+    );
+
+    $('loadInbox').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        const items = await api('/api/notifications/inbox', {headers: auth($('tenantToken').value.trim())});
+        const host = $('inbox'); host.textContent = '';
+        if (!items.length) host.textContent = 'No delivered messages.';
+        for (const item of items) {
+          const box = document.createElement('div'); box.className = 'inbox-item';
+          const content = document.createElement('div'); content.textContent = item.content;
+          const meta = document.createElement('small'); meta.textContent = `${item.event_id} · ${item.delivered_at}`;
+          box.append(content, meta); host.append(box);
+        }
+      } catch (error) { show('inbox', `Error — ${error.message}`); }
+      finally { button.disabled = false; }
+    };
+  </script>
+</body>
+</html>

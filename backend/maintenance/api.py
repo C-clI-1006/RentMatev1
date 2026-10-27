@@ -2,11 +2,10 @@ import hashlib
 import hmac
 import json
 import os
-from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,9 +33,8 @@ router = APIRouter(prefix="/api/maintenance", tags=["Maintenance (Kerwin)"])
 bearer = HTTPBearer()
 
 
-@lru_cache
-def get_store():
-    path = os.getenv("DATABASE_PATH", "./rentmate.db")
+def get_store(request: Request) -> Store:
+    path = request.app.state.db_path
     # The API uses the shared identity/binding tables as its trust boundary.
     # Maintenance still writes only its own mc_* tables.
     bootstrap = init_connection(path)

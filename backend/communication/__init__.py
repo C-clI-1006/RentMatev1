@@ -17,5 +17,10 @@ school Qwen proxy is confirmed working.
 """
 
 from .service import CommunicationOutcome, CommunicationService
+from .maintenance import MaintenanceCommunicationReceiver
 
-__all__ = ["CommunicationOutcome", "CommunicationService"]
+__all__ = [
+    "CommunicationOutcome",
+    "CommunicationService",
+    "MaintenanceCommunicationReceiver",
+]

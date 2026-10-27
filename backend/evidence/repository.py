@@ -349,12 +349,13 @@ class EvidenceRepository:
                                WHERE ed.document_id=d.document_id)
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                            d.created_at AS uploaded_at,
-                           c.details AS classification_details
+                           c.details AS classification_details,
+                           d.rowid AS insertion_rowid
                     FROM evidence_document d
                     LEFT JOIN evidence_classification c ON c.document_id = d.document_id
                     WHERE d.tenant_id = ? AND d.property_id = ?
                 )
-                ORDER BY uploaded_at DESC
+                ORDER BY uploaded_at DESC, insertion_rowid DESC
                 """,
                 (tenant_id, property_id),
             ).fetchall()

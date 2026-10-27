@@ -1,11 +1,13 @@
-"""UC4/UC5 preparation service with no persistence or external dependencies.
+"""UC4/UC5 preparation service.
 
-This layer deliberately stops at traceable candidates.  Cross-module adapters
-will later translate candidates into the team's review/drafting contracts.
+The preparation functions remain dependency-free and stop at traceable
+candidates. ``run_due_alerts`` is the public scheduled orchestration entry and
+delegates persistence to the cross-module adapter in ``due_alerts.py``.
 """
 
 from collections.abc import Collection, Iterable
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from typing import TypeVar
 
 from .models import (
@@ -122,3 +124,24 @@ def _record_or_reject_conflict(
     if previous is not None and previous != item:
         raise ValueError(f"conflicting duplicate {item_name} for key {key}")
     seen[key] = item
+
+
+def run_due_alerts(
+    *,
+    now: datetime,
+    db_path: str | Path | None = None,
+    reminder_window_days: int = 30,
+) -> dict[str, int | str]:
+    """Create idempotent UC4/UC5 manager-review drafts.
+
+    The deferred import keeps the pure rule/preparation layer usable without
+    loading SQLite and the shared drafting contract.
+    """
+
+    from .due_alerts import run_due_alerts as _run_due_alerts
+
+    return _run_due_alerts(
+        now=now,
+        db_path=db_path,
+        reminder_window_days=reminder_window_days,
+    )

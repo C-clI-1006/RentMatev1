@@ -93,6 +93,15 @@ def seed(database: str | Path) -> None:
             # These fixed IDs are synthetic demo fixtures. Reset only their
             # prior decisions so every launcher start offers the same review
             # exercise without touching any real or dynamically created row.
+            event_id = f"draft:{draft_id}:v1"
+            db.execute(
+                "DELETE FROM tenant_inbox WHERE event_id=?",
+                (event_id,),
+            )
+            db.execute(
+                "DELETE FROM notification_event WHERE event_id=?",
+                (event_id,),
+            )
             db.execute("DELETE FROM review WHERE draft_id=?", (draft_id,))
             db.execute(
                 "DELETE FROM audit WHERE subject_type='draft' AND subject_id=?",

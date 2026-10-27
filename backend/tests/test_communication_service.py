@@ -274,6 +274,59 @@ def test_maintenance_registered_drafts_ack(db):
     assert outcome.review is None
 
 
+def test_real_maintenance_storage_integrates_without_legacy_projection(tmp_path):
+    """UC1 uses the contract, not a hidden duplicate-table side effect."""
+    from llm.assess import KeywordPriorityAssessor
+    from maintenance.service import MaintenanceService
+    from maintenance.store import Store
+
+    db_path = tmp_path / "communication-maintenance.db"
+    conn = init_connection(db_path)
+    ts = "2026-01-01T00:00:00Z"
+    conn.execute(
+        "INSERT INTO tenant (tenant_id,name,created_at) VALUES (?, 'T', ?)",
+        (TENANT, ts),
+    )
+    conn.execute(
+        "INSERT INTO property (property_id,name,created_at) VALUES (?, 'P', ?)",
+        (PROPERTY, ts),
+    )
+    conn.execute(
+        "INSERT INTO tenant_property (tenant_id,property_id,role,created_at) "
+        "VALUES (?, ?, 'resident', ?)",
+        (TENANT, PROPERTY, ts),
+    )
+    conn.commit()
+    auth = AuthContext(TENANT, PROPERTY)
+    maintenance = MaintenanceService(
+        Store(db_path), KeywordPriorityAssessor(), auth
+    )
+    service = CommunicationService(
+        conn,
+        maintenance,
+        FakeLeaseRent(
+            LeaseRentFactResult(
+                message_id="unused",
+                availability=FactAvailability.NOT_AVAILABLE,
+            )
+        ),
+    )
+    try:
+        outcome = service.handle_message(
+            auth, "The kitchen window is broken and needs repair"
+        )
+        assert outcome.routed_to == "maintenance"
+        assert outcome.intake.status == "registered"
+        assert outcome.draft.request_id == outcome.intake.request_id
+        assert conn.execute("SELECT count(*) FROM mc_request").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT count(*) FROM maintenance_request").fetchone()[0]
+            == 0
+        )
+    finally:
+        conn.close()
+
+
 def test_maintenance_needs_clarification_asks_tenant(db):
     svc = make_service(
         db,

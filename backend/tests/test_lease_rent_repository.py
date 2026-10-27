@@ -89,6 +89,55 @@ def test_sqlite_repository_verifies_tenant_property_binding(db):
     )
 
 
+def test_repository_resolves_source_scope_and_property_ownership(db):
+    repository = SQLiteLeaseRentRepository(db)
+
+    rent = repository.resolve_source_scope(
+        source_type="rent_record", source_id="rent-1"
+    )
+    lease = repository.resolve_source_scope(source_type="lease", source_id="lease-1")
+
+    assert rent is not None
+    assert (rent.lease_id, rent.tenant_id, rent.property_id) == (
+        "lease-1",
+        "tenant-1",
+        "property-1",
+    )
+    assert lease is not None
+    assert (lease.tenant_id, lease.property_id) == ("tenant-1", "property-1")
+    assert repository.source_belongs_to_property(
+        source_type="rent_record",
+        source_id="rent-1",
+        property_id="property-1",
+    )
+    assert not repository.source_belongs_to_property(
+        source_type="rent_record",
+        source_id="rent-1",
+        property_id="another-property",
+    )
+    assert not repository.source_belongs_to_property(
+        source_type="lease",
+        source_id="missing",
+        property_id="property-1",
+    )
+
+
+def test_repository_rejects_rent_parent_property_conflict(db):
+    db.execute(
+        "INSERT INTO property (property_id,name,created_at) "
+        "VALUES ('property-2','Other','2026-01-01T00:00:00Z')"
+    )
+    db.execute(
+        "UPDATE rent_record SET property_id='property-2' "
+        "WHERE rent_record_id='rent-1'"
+    )
+
+    with pytest.raises(LeaseRentDataError, match="property conflicts"):
+        SQLiteLeaseRentRepository(db).resolve_source_scope(
+            source_type="rent_record", source_id="rent-1"
+        )
+
+
 def test_fact_query_computes_status_from_structured_record(db):
     result = LeaseRentQueryService(SQLiteLeaseRentRepository(db)).get_facts(
         _query(QuestionType.RENT_STATUS)

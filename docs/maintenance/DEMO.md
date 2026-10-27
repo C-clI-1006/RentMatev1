@@ -120,8 +120,12 @@ call `GET /api/reviews` with the printed forbidden-scope test token; it maps
 
 `accepted`, `pending` or `handed_off` records describe queue/handoff state only;
 they do not prove delivery. Communication, Notification, Lease/Rent and UC7
-Reporting currently have backend/test seams but no mounted HTTP routers. The
-only Lease/Rent HTTP surface is the explicit 503 ops stub.
+Reporting routers are now mounted in the integrated application. The
+authenticated `POST /api/ops/rent-alerts/run` endpoint executes the UC4 overdue
+rent and UC5 lease-deadline scans and returns their real results; repeated runs
+reuse stable source IDs so they do not create duplicate logical drafts. Its 503
+response is only a defensive fallback when the Lease/Rent implementation cannot
+be imported, not the normal integrated behaviour.
 
 ## Deployment rehearsal
 

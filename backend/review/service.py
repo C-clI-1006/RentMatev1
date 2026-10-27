@@ -1,8 +1,9 @@
 """Manager review workflow for tenant-facing drafts.
 
 Review decisions are immutable and bound to one exact draft version. This
-module does not dispatch notifications; it only records the exact content that
-a later notification dispatcher may use.
+module does not contact a delivery transport. It atomically records the
+decision and queues the exact approved content for the later single-owner
+notification dispatcher.
 """
 
 from __future__ import annotations
@@ -16,9 +17,15 @@ from pydantic import BaseModel, Field
 from contracts import (
     Draft,
     DraftStatus,
+    EventId,
     FactReference,
+    MessageId,
+    NotificationEvent,
+    NotificationKind,
+    RecipientId,
     ReviewDecisionRecord,
 )
+from notification import SQLiteNotificationService
 from contracts.drafting import ReviewDecision
 from permissions import (
     SQLiteManagerRepository,
@@ -54,6 +61,9 @@ class ReviewService:
     def __init__(self, connection: sqlite3.Connection, auth: AuthContext) -> None:
         self._connection = connection
         self.auth = auth
+        self._notifications = SQLiteNotificationService(
+            connection, commit_changes=False
+        )
 
     def _require_scope(self) -> str:
         manager_id = manager_id_from_auth(self.auth)
@@ -162,6 +172,39 @@ class ReviewService:
             )
             if updated.rowcount != 1:
                 raise ReviewConflictError("draft changed while it was being reviewed")
+            notification_event_id = None
+            if decision is ReviewDecision.APPROVED:
+                if not row["recipient_id"]:
+                    raise ReviewConflictError("draft recipient cannot be resolved")
+                notification_event_id = f"draft:{draft_id}:v{expected_version}"
+                if row["source_kind"] == "maintenance_status":
+                    kind = NotificationKind.MAINTENANCE_STATUS
+                elif row["source_kind"] in ("rent_reminder", "lease_deadline") or row[
+                    "message_type"
+                ] == "lease_rent":
+                    kind = NotificationKind.LEASE_RENT_REPLY
+                else:
+                    kind = NotificationKind.OTHER
+                self._notifications.publish(
+                    NotificationEvent(
+                        event_id=EventId(notification_event_id),
+                        recipient_id=RecipientId(row["recipient_id"]),
+                        kind=kind,
+                        request_id=row["request_id"],
+                        message_id=(
+                            MessageId(row["message_id"])
+                            if row["message_id"] is not None
+                            else None
+                        ),
+                        payload={
+                            "property_id": row["property_id"],
+                            "draft_id": draft_id,
+                            "draft_version": expected_version,
+                            "content": clean_content,
+                        },
+                        created_at=now,
+                    )
+                )
             self._connection.execute(
                 "INSERT INTO audit (audit_id,actor,action,subject_type,subject_id,"
                 "details,at) VALUES (?,?,?,?,?,?,?)",
@@ -172,7 +215,11 @@ class ReviewService:
                     "draft",
                     draft_id,
                     json.dumps(
-                        {"review_id": record.review_id, "draft_version": expected_version},
+                        {
+                            "review_id": record.review_id,
+                            "draft_version": expected_version,
+                            "notification_event_id": notification_event_id,
+                        },
                         ensure_ascii=False,
                     ),
                     _iso(now),
@@ -213,19 +260,25 @@ class ReviewService:
         )
 
 
-_PROPERTY_EXPRESSION = "COALESCE(m.property_id,mr.property_id,rr.property_id,l.property_id)"
+_PROPERTY_EXPRESSION = (
+    "COALESCE(m.property_id,cmr.property_id,mr.property_id,rr.property_id,l.property_id)"
+)
 _DRAFT_SELECT = """
-SELECT d.*, m.content AS original_message,
-       COALESCE(m.property_id,mr.property_id,rr.property_id,l.property_id) AS property_id
+SELECT d.*, m.content AS original_message, m.message_type AS message_type,
+       COALESCE(m.tenant_id,cmr.tenant_id,mr.tenant_id,l.tenant_id) AS recipient_id,
+       COALESCE(m.property_id,cmr.property_id,mr.property_id,rr.property_id,l.property_id) AS property_id
 FROM draft d
 LEFT JOIN message m ON m.message_id=d.message_id
+LEFT JOIN communication_maintenance_receipt cmr
+  ON d.source_kind='maintenance_status' AND d.source_id=cmr.source_id
 LEFT JOIN maintenance_request mr ON mr.request_id=d.request_id
 LEFT JOIN rent_record rr
   ON d.source_kind='rent_reminder'
  AND d.source_id=('rent-overdue:' || rr.rent_record_id || ':' || rr.due_date)
 LEFT JOIN lease l
-  ON d.source_kind='lease_deadline'
- AND d.source_id=('lease-deadline:' || l.lease_id || ':' || l.end_date)
+  ON (d.source_kind='lease_deadline'
+      AND d.source_id=('lease-deadline:' || l.lease_id || ':' || l.end_date))
+  OR (d.source_kind='rent_reminder' AND l.lease_id=rr.lease_id)
 """
 
 

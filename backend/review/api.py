@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,8 +36,8 @@ router = APIRouter(prefix="/api/reviews", tags=["Manager Review"])
 bearer = HTTPBearer()
 
 
-def get_connection() -> Iterator[sqlite3.Connection]:
-    path = os.getenv("DATABASE_PATH", "./rentmate.db")
+def get_connection(request: Request) -> Iterator[sqlite3.Connection]:
+    path = request.app.state.db_path
     bootstrap = init_connection(path)
     bootstrap.close()
     # FastAPI executes synchronous dependencies/endpoints in a worker pool;

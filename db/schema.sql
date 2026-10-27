@@ -166,9 +166,13 @@ CREATE TABLE IF NOT EXISTS draft (
     -- message; their origin is (source_kind, source_id) instead.
     -- Invariant: exactly one of message_id / source_id is set.
     message_id    TEXT REFERENCES message(message_id),
-    request_id    TEXT REFERENCES maintenance_request(request_id),
+    -- Cross-module reference. The current Maintenance implementation owns
+    -- mc_request, while older databases may still contain maintenance_request.
+    -- Keep the identifier for provenance/delivery without coupling this table
+    -- to either module's private persistence schema.
+    request_id    TEXT,
     -- Origin provenance for system-generated drafts.
-    -- source_kind e.g. 'rent_reminder' | 'lease_deadline'
+    -- source_kind e.g. 'rent_reminder' | 'lease_deadline' | 'maintenance_status'
     -- source_id   stable, deterministic. The adapter should reuse the
     --             lease_rent candidate keys verbatim (see
     --             lease_rent/rules.py rent_reminder_key /
@@ -198,6 +202,26 @@ CREATE INDEX IF NOT EXISTS idx_draft_message ON draft (message_id);
 -- (re-runs of a scheduled job must not create a second review item).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_draft_source ON draft (source_id)
     WHERE source_id IS NOT NULL;
+
+-- Durable acceptance receipt for Maintenance -> Communication handoffs.
+-- The composite producer identity is retained exactly; source_id is the
+-- Communication-owned stable draft/notification identity derived from it.
+CREATE TABLE IF NOT EXISTS communication_maintenance_receipt (
+    event_id       TEXT NOT NULL,
+    recipient_id   TEXT NOT NULL,
+    message_type   TEXT NOT NULL,
+    source_id      TEXT NOT NULL UNIQUE,
+    request_id     TEXT NOT NULL,
+    tenant_id      TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id    TEXT NOT NULL REFERENCES property(property_id),
+    payload        TEXT NOT NULL,
+    draft_id       TEXT NOT NULL REFERENCES draft(draft_id),
+    received_at    TEXT NOT NULL,
+    PRIMARY KEY (event_id, recipient_id, message_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_communication_maintenance_request
+    ON communication_maintenance_receipt (property_id, request_id, received_at);
 
 -- Approval is bound to a specific draft version. final_content is the exact
 -- text that may be delivered; the sending path reads ONLY from here.
@@ -232,6 +256,39 @@ CREATE TABLE IF NOT EXISTS notification_event (
     updated_at    TEXT NOT NULL,
     PRIMARY KEY (event_id, recipient_id) -- dedup key
 );
+
+-- Prototype transport used by the executable demo. A row exists only after
+-- the dispatcher has durably placed the exact approved text in the tenant's
+-- property-scoped inbox. Replays reuse the same composite delivery key.
+CREATE TABLE IF NOT EXISTS tenant_inbox (
+    event_id      TEXT NOT NULL,
+    recipient_id  TEXT NOT NULL REFERENCES tenant(tenant_id),
+    property_id   TEXT NOT NULL REFERENCES property(property_id),
+    content       TEXT NOT NULL,
+    delivered_at  TEXT NOT NULL,
+    PRIMARY KEY (event_id, recipient_id),
+    FOREIGN KEY (event_id, recipient_id)
+        REFERENCES notification_event(event_id, recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_inbox_scope
+    ON tenant_inbox (recipient_id, property_id, delivered_at);
+
+-- Manager alerts are a separate delivery boundary: they are authorised by
+-- manager_property and never enter the tenant inbox or draft-review path.
+CREATE TABLE IF NOT EXISTS manager_inbox (
+    event_id      TEXT NOT NULL,
+    recipient_id  TEXT NOT NULL REFERENCES manager(manager_id),
+    property_id   TEXT NOT NULL REFERENCES property(property_id),
+    content       TEXT NOT NULL,
+    delivered_at  TEXT NOT NULL,
+    PRIMARY KEY (event_id, recipient_id),
+    FOREIGN KEY (event_id, recipient_id)
+        REFERENCES notification_event(event_id, recipient_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manager_inbox_scope
+    ON manager_inbox (recipient_id, property_id, delivered_at);
 
 -- ---------------------------------------------------------------------------
 -- Evidence documents (owned: evidence — SCRUM-8)

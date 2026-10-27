@@ -1,6 +1,31 @@
-"""Notification component (shared capability).
+"""Durable notification outbox and its single retry-owning dispatcher."""
 
-Implements `contracts.INotificationService` plus the dispatcher (queue
-worker) which is the SINGLE retry owner. Delivery statuses are truthful:
-accepted / pending_review / delivered / failed / pending_retry.
-"""
+from .dispatcher import (
+    DeliveryAdapter,
+    PermanentDeliveryError,
+    RetryableDeliveryError,
+    SQLiteManagerInboxAdapter,
+    SQLiteNotificationInboxAdapter,
+    SQLiteTenantInboxAdapter,
+    dispatch_one,
+    dispatch_pending,
+)
+from .service import (
+    NotificationConflictError,
+    NotificationNotFoundError,
+    SQLiteNotificationService,
+)
+
+__all__ = [
+    "DeliveryAdapter",
+    "PermanentDeliveryError",
+    "RetryableDeliveryError",
+    "SQLiteManagerInboxAdapter",
+    "SQLiteNotificationInboxAdapter",
+    "SQLiteTenantInboxAdapter",
+    "dispatch_one",
+    "dispatch_pending",
+    "NotificationConflictError",
+    "NotificationNotFoundError",
+    "SQLiteNotificationService",
+]

@@ -36,7 +36,7 @@ from .lease_rent import FactReference
 
 # Origin kinds for system-generated drafts. New kinds require a contract
 # change (PR reviewed by both affected module owners).
-DraftSourceKind = Literal["rent_reminder", "lease_deadline"]
+DraftSourceKind = Literal["rent_reminder", "lease_deadline", "maintenance_status"]
 
 
 class DraftStatus(str, Enum):
