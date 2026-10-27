@@ -3,45 +3,59 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RentMate integrated demo</title>
+  <title>RentMate full-system demo</title>
   <style>
     :root { color-scheme: light; font-family: Inter, Segoe UI, sans-serif; color: #172033; background: #f4f6fb; }
     * { box-sizing: border-box; }
     body { margin: 0; }
-    header { padding: 26px max(24px, calc((100% - 1120px)/2)); color: white; background: #263a76; }
-    header h1 { margin: 0 0 6px; font-size: 28px; }
+    header { padding: 28px max(24px, calc((100% - 1160px)/2)); color: white; background: #263a76; }
+    header h1 { margin: 0 0 7px; font-size: 29px; }
     header p { margin: 0; color: #dce4ff; }
-    main { max-width: 1120px; margin: 24px auto 48px; padding: 0 24px; }
+    main { max-width: 1160px; margin: 24px auto 48px; padding: 0 24px; }
     .notice, section { background: white; border: 1px solid #dbe1ee; border-radius: 12px; box-shadow: 0 5px 16px #22345b12; }
     .notice { padding: 14px 18px; margin-bottom: 18px; border-left: 5px solid #ef9b24; }
-    .credentials { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
     section { padding: 20px; margin: 16px 0; }
     h2 { margin: 0 0 8px; font-size: 20px; }
     p { line-height: 1.5; }
+    .credentials { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     label { display: block; font-size: 13px; font-weight: 650; }
     input, textarea { width: 100%; margin-top: 5px; border: 1px solid #bdc7da; border-radius: 7px; padding: 9px; font: inherit; }
     textarea { min-height: 82px; resize: vertical; }
-    button, .link { display: inline-block; border: 0; border-radius: 7px; padding: 9px 14px; margin: 5px 7px 5px 0; font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; }
+    button, .link { display: inline-block; border: 0; border-radius: 7px; padding: 10px 15px; margin: 5px 7px 5px 0; font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; }
     button { color: white; background: #3158b5; }
+    button.primary { font-size: 16px; padding: 12px 20px; background: #193f9a; }
     button.secondary, .link { color: #24458d; background: #e8eefc; }
     button.danger { background: #a73b4a; }
     button:disabled { opacity: .55; cursor: wait; }
     .result { margin-top: 10px; padding: 10px 12px; min-height: 42px; white-space: pre-wrap; border-radius: 7px; background: #f3f5f9; color: #27334b; }
+    .summary { display: flex; gap: 12px; flex-wrap: wrap; margin: 14px 0; }
+    .metric { min-width: 120px; padding: 12px; border-radius: 9px; background: #edf1f8; }
+    .metric strong { display: block; font-size: 22px; }
+    .checks { display: grid; gap: 8px; margin-top: 14px; }
+    .check { display: grid; grid-template-columns: 80px minmax(190px, 1fr) 2fr; gap: 10px; align-items: start; padding: 11px 12px; border: 1px solid #dbe1ee; border-radius: 8px; }
+    .check.pass { border-left: 5px solid #21875d; background: #f1fbf6; }
+    .check.fail { border-left: 5px solid #b13e4c; background: #fff4f5; }
+    .check.running { border-left: 5px solid #d38a20; background: #fff9ef; }
+    .badge { font-weight: 750; }
+    .detail { color: #526078; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
     .review { margin-top: 12px; padding: 14px; border: 1px solid #dbe1ee; border-radius: 9px; }
     .review small { color: #5d687d; }
     .inbox-item { border-left: 4px solid #2b8a64; padding: 10px 12px; margin-top: 9px; background: #f0faf6; }
     .flow { display: flex; flex-wrap: wrap; gap: 7px; color: #43516b; font-size: 14px; }
     .flow span { padding: 6px 9px; border-radius: 99px; background: #edf1f8; }
-    @media (max-width: 760px) { .credentials { grid-template-columns: 1fr; } }
+    details { margin-top: 18px; }
+    details > summary { cursor: pointer; font-weight: 700; }
+    @media (max-width: 820px) { .credentials { grid-template-columns: 1fr 1fr; } .check { grid-template-columns: 72px 1fr; } .detail { grid-column: 1 / -1; } }
+    @media (max-width: 520px) { .credentials { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <h1>RentMate integrated demo</h1>
-    <p>UC4/UC5 scheduled detection → manager review → durable delivery → tenant inbox</p>
+    <h1>RentMate full-system demonstration</h1>
+    <p>Evidence → Maintenance → Communication → UC4/UC5 → Review → Notification → Reporting → Access isolation</p>
   </header>
   <main>
-    <div class="notice"><strong>Local prototype only.</strong> The fixed tokens below are demo credentials created by <code>Start-RentMate.ps1</code>; never use them in deployment.</div>
+    <div class="notice"><strong>Local prototype only.</strong> Start the app with <code>Start-RentMate.cmd</code>. The fixed credentials below are local demo tokens and must never be used in deployment.</div>
 
     <section>
       <h2>Demo credentials</h2>
@@ -49,89 +63,254 @@
         <label>Scheduler token<input id="schedulerToken" value="scheduler-demo"></label>
         <label>Manager token<input id="managerToken" value="manager-demo"></label>
         <label>Tenant token<input id="tenantToken" value="tenant-demo"></label>
+        <label>Other-property manager<input id="otherManagerToken" value="manager-other-demo"></label>
       </div>
     </section>
 
     <section>
-      <h2>1. Prepare overdue-rent and lease-deadline drafts</h2>
-      <p>The trusted scheduler reads persisted records and creates idempotent, traceable drafts. It does not send them.</p>
-      <button id="runAlerts">Run scheduled checks</button>
-      <div class="result" id="runResult">Not run yet.</div>
-    </section>
-
-    <section>
-      <h2>2. Manager review</h2>
-      <p>Only the exact approved draft version may enter the delivery queue. Rejected drafts are never sent.</p>
-      <button id="loadReviews">Load pending reviews</button>
-      <div id="reviews" class="result">No reviews loaded.</div>
-    </section>
-
-    <section>
-      <h2>3. Dispatch approved messages</h2>
-      <p>The dispatcher is the single retry owner. Accepted means queued; only a durable inbox write becomes delivered.</p>
-      <button id="dispatch">Dispatch notifications</button>
-      <div class="result" id="dispatchResult">Not dispatched yet.</div>
-    </section>
-
-    <section>
-      <h2>4. Tenant inbox</h2>
-      <button id="loadInbox">Load delivered messages</button>
-      <div id="inbox" class="result">No messages loaded.</div>
-    </section>
-
-    <section>
-      <h2>Other integrated modules</h2>
-      <div class="flow">
-        <span>Maintenance</span><span>Evidence</span><span>Review</span>
-        <span>Lease &amp; rent</span><span>Reporting</span><span>Notification</span>
+      <h2>One-click end-to-end verification</h2>
+      <p>This creates synthetic local records and exercises every mounted module through HTTP. A failed step remains visible and later independent checks continue. Restart <code>Start-RentMate.cmd</code> to reset the fixed review demonstration.</p>
+      <button class="primary" id="runFullDemo">Run full system check</button>
+      <button class="secondary" id="clearResults">Clear results</button>
+      <div class="summary">
+        <div class="metric"><strong id="passCount">0</strong>passed</div>
+        <div class="metric"><strong id="failCount">0</strong>failed</div>
+        <div class="metric"><strong id="totalCount">0</strong>completed</div>
       </div>
-      <p>
-        <a class="link" href="/api/maintenance/demo">Maintenance demo</a>
-        <a class="link" href="/docs">Interactive API documentation</a>
-        <a class="link" href="/health">Health check</a>
-      </p>
+      <div id="fullChecks" class="checks"><div class="result">Press “Run full system check” to begin.</div></div>
+    </section>
+
+    <details>
+      <summary>Manual UC4/UC5 controls</summary>
+      <section>
+        <h2>Prepare overdue-rent and lease-deadline drafts</h2>
+        <p>The scheduler creates idempotent, traceable drafts. It does not send them.</p>
+        <button id="runAlerts">Run scheduled checks</button>
+        <div class="result" id="runResult">Not run yet.</div>
+      </section>
+      <section>
+        <h2>Manager review</h2>
+        <button id="loadReviews">Load pending reviews</button>
+        <div id="reviews" class="result">No reviews loaded.</div>
+      </section>
+      <section>
+        <h2>Dispatch and tenant inbox</h2>
+        <button id="dispatch">Dispatch notifications</button>
+        <button id="loadInbox" class="secondary">Load delivered messages</button>
+        <div class="result" id="dispatchResult">Not dispatched yet.</div>
+        <div id="inbox" class="result">No messages loaded.</div>
+      </section>
+    </details>
+
+    <section>
+      <h2>Supporting views</h2>
+      <div class="flow"><span>Maintenance</span><span>Evidence</span><span>Communication</span><span>Review</span><span>Lease &amp; rent</span><span>Reporting</span><span>Notification</span></div>
+      <p><a class="link" href="/api/maintenance/demo">Maintenance detail</a><a class="link" href="/docs">Interactive API documentation</a><a class="link" href="/health">Health check</a></p>
     </section>
   </main>
 
   <script>
     const $ = id => document.getElementById(id);
     const auth = token => ({Authorization: `Bearer ${token}`});
+    const jsonHeaders = token => ({...auth(token), 'Content-Type': 'application/json'});
     const show = (id, value) => { $(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); };
 
-    async function api(path, options = {}) {
+    async function request(path, options = {}) {
       const response = await fetch(path, options);
       const text = await response.text();
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
-      if (!response.ok) throw new Error(`${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
-      return data;
+      if (!response.ok) {
+        const error = new Error(`${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+      return {status: response.status, data};
     }
+
+    async function api(path, options = {}) { return (await request(path, options)).data; }
+
+    let totals = {pass: 0, fail: 0};
+    function resetChecks() {
+      totals = {pass: 0, fail: 0};
+      $('passCount').textContent = '0'; $('failCount').textContent = '0'; $('totalCount').textContent = '0';
+      $('fullChecks').replaceChildren();
+    }
+    function updateTotals() {
+      $('passCount').textContent = totals.pass; $('failCount').textContent = totals.fail;
+      $('totalCount').textContent = totals.pass + totals.fail;
+    }
+    function compact(value) {
+      const text = typeof value === 'string' ? value : JSON.stringify(value);
+      return text.length > 520 ? text.slice(0, 517) + '...' : text;
+    }
+    async function check(name, action) {
+      const row = document.createElement('div'); row.className = 'check running';
+      const badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = 'RUNNING';
+      const label = document.createElement('div'); label.textContent = name;
+      const detail = document.createElement('div'); detail.className = 'detail'; detail.textContent = 'Request in progress';
+      row.append(badge, label, detail); $('fullChecks').append(row);
+      try {
+        const result = await action();
+        row.className = 'check pass'; badge.textContent = 'PASS'; detail.textContent = compact(result);
+        totals.pass += 1; updateTotals(); return result;
+      } catch (error) {
+        row.className = 'check fail'; badge.textContent = 'FAIL'; detail.textContent = error.message;
+        totals.fail += 1; updateTotals(); return null;
+      }
+    }
+    function requireValue(value, message) { if (!value) throw new Error(message); return value; }
+
+    $('runFullDemo').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true; resetChecks();
+      const scheduler = $('schedulerToken').value.trim();
+      const manager = $('managerToken').value.trim();
+      const tenant = $('tenantToken').value.trim();
+      const otherManager = $('otherManagerToken').value.trim();
+      const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const state = {};
+
+      await check('Application health', async () => {
+        const result = await request('/health');
+        if (result.data.status !== 'ok') throw new Error('Health response was not ok');
+        return `HTTP ${result.status}; status=ok`;
+      });
+
+      await check('Evidence upload and classification', async () => {
+        const form = new FormData();
+        form.append('property_id', 'demo-property');
+        form.append('file', new Blob(['Synthetic completion evidence for the RentMate full-system demonstration.'], {type: 'text/plain'}), `demo-${runId}.txt`);
+        const result = await request('/api/evidence/documents', {method: 'POST', headers: auth(tenant), body: form});
+        if (result.data.status !== 'accepted') throw new Error(`Evidence was not accepted: ${compact(result.data)}`);
+        state.documentId = requireValue(result.data.document && result.data.document.document_id, 'Upload returned no document_id');
+        return `HTTP ${result.status}; document_id=${state.documentId}; classification=${result.data.document.classification_status || 'recorded'}`;
+      });
+
+      await check('Maintenance intake and Qwen assessment', async () => {
+        const result = await request('/api/maintenance/requests', {
+          method: 'POST', headers: {...jsonHeaders(tenant), 'Idempotency-Key': `full-demo-${runId}`},
+          body: JSON.stringify({title: 'Loose kitchen cupboard handle', description: 'The handle is loose, but the cupboard still works. There is no injury, gas smell, smoke, flooding or immediate hazard.', location: 'Kitchen', evidence_refs: [state.documentId]})
+        });
+        state.requestId = requireValue(result.data.request_id, 'Maintenance intake returned no request_id');
+        return `HTTP ${result.status}; request_id=${state.requestId}; intake=${result.data.status}`;
+      });
+
+      await check('Manager reads and controls maintenance', async () => {
+        let record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        if (record.status === 'under_review') {
+          await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}/assessment`, {
+            method: 'POST', headers: jsonHeaders(manager),
+            body: JSON.stringify({expected_version: record.version, priority: 'routine', rationale: 'Manual fallback for the synthetic safe demo case.'})
+          });
+          record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        }
+        for (const target of ['approved', 'in_progress', 'awaiting_confirmation', 'closed']) {
+          await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}/status`, {
+            method: 'POST', headers: jsonHeaders(manager),
+            body: JSON.stringify({expected_version: record.version, target_status: target, reason: `Full demo transition to ${target}`, evidence_refs: [state.documentId]})
+          });
+          record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        }
+        if (record.status !== 'closed') throw new Error(`Expected closed, received ${record.status}`);
+        return `request=${state.requestId}; status=closed; priority=${record.priority}; events=${record.events.length}`;
+      });
+
+      await check('Evidence reference ownership', async () => {
+        const result = await request('/api/evidence/references/validate', {
+          method: 'POST', headers: jsonHeaders(tenant), body: JSON.stringify({property_id: 'demo-property', evidence_refs: [state.documentId]})
+        });
+        return `HTTP ${result.status}; property-scoped reference accepted`;
+      });
+
+      await check('Tenant communication routing', async () => {
+        const result = await request('/api/communication/messages', {
+          method: 'POST', headers: jsonHeaders(tenant), body: JSON.stringify({content: 'When does my current lease end?'})
+        });
+        state.messageId = requireValue(result.data.message_id, 'Communication returned no message_id');
+        if (result.data.delivery_status !== 'not_dispatched') throw new Error('Communication incorrectly claimed delivery');
+        return `message_id=${state.messageId}; reply=${result.data.reply_status}; delivery=not_dispatched`;
+      });
+
+      await check('Maintenance event handoff to Communication', async () => {
+        const result = await request('/api/ops/communication/maintenance-events/run', {method: 'POST', headers: auth(scheduler)});
+        return `processed=${result.data.processed}; handed_off=${result.data.handed_off}; retry=${result.data.retry}; rejected=${result.data.rejected}`;
+      });
+
+      await check('UC4/UC5 scheduled detection', async () => {
+        const now = encodeURIComponent(new Date().toISOString());
+        const first = (await request(`/api/ops/rent-alerts/run?now=${now}`, {method: 'POST', headers: auth(scheduler)})).data;
+        const second = (await request(`/api/ops/rent-alerts/run?now=${now}`, {method: 'POST', headers: auth(scheduler)})).data;
+        if (second.drafts_created !== 0) throw new Error(`Idempotent rerun created ${second.drafts_created} drafts`);
+        state.alertRun = first;
+        return `first created=${first.drafts_created}; rent=${first.rent_candidates}; lease=${first.lease_candidates}; rerun created=0`;
+      });
+
+      await check('Cross-property manager isolation', async () => {
+        const response = await fetch('/api/reviews/demo-review-draft', {headers: auth(otherManager)});
+        if (response.status !== 404) throw new Error(`Expected concealed 404, received HTTP ${response.status}`);
+        return 'Other-property manager received concealed HTTP 404 for a property-1 draft';
+      });
+
+      await check('Manager approval and rejection', async () => {
+        const queue = (await request('/api/reviews', {headers: auth(manager)})).data;
+        const rent = queue.find(item => item.draft.source_kind === 'rent_reminder');
+        const lease = queue.find(item => item.draft.source_kind === 'lease_deadline');
+        if (!rent || !lease) throw new Error('Expected pending rent and lease drafts; restart the demo to reset fixed data');
+        await request(`/api/reviews/${encodeURIComponent(rent.draft.draft_id)}/decision`, {
+          method: 'POST', headers: jsonHeaders(manager), body: JSON.stringify({expected_version: rent.draft.version, decision: 'approved', final_content: rent.draft.content})
+        });
+        await request(`/api/reviews/${encodeURIComponent(lease.draft.draft_id)}/decision`, {
+          method: 'POST', headers: jsonHeaders(manager), body: JSON.stringify({expected_version: lease.draft.version, decision: 'rejected', reason: 'Synthetic full-demo rejection'})
+        });
+        state.approvedDraftId = rent.draft.draft_id;
+        return `approved=${rent.draft.draft_id}; rejected=${lease.draft.draft_id}`;
+      });
+
+      await check('Notification dispatch and exact tenant inbox', async () => {
+        const dispatched = (await request('/api/ops/notifications/dispatch', {method: 'POST', headers: auth(scheduler)})).data;
+        const inbox = (await request('/api/notifications/inbox', {headers: auth(tenant)})).data;
+        const expectedEvent = `draft:${state.approvedDraftId}:v1`;
+        if (!inbox.some(item => item.event_id === expectedEvent)) throw new Error(`Approved event ${expectedEvent} was not delivered`);
+        return `processed=${dispatched.processed}; delivered=${dispatched.delivered}; inbox_items=${inbox.length}; approved event found`;
+      });
+
+      await check('Monthly report generation and history', async () => {
+        const now = new Date(); const year = now.getUTCFullYear(); const month = now.getUTCMonth() + 1;
+        const generated = (await request('/api/ops/monthly-reports/run', {
+          method: 'POST', headers: jsonHeaders(scheduler), body: JSON.stringify({property_id: 'demo-property', year, month})
+        })).data;
+        const history = (await request(`/api/manager/monthly-reports?property_id=demo-property&year=${year}&month=${month}`, {headers: auth(manager)})).data;
+        if (!history.length) throw new Error('Generated report was absent from manager history');
+        const report = requireValue(generated.report, 'Generation returned no report record');
+        return `report_id=${report.report_id}; outcome=${report.outcome}; narrative=${report.narrative.source}; reused=${generated.reused}; history=${history.length}`;
+      });
+
+      await check('Final audit views remain readable', async () => {
+        const summaries = (await request('/api/maintenance/summaries', {headers: auth(manager)})).data;
+        const documents = (await request('/api/evidence/documents?property_id=demo-property', {headers: auth(tenant)})).data;
+        if (!summaries.some(item => item.request_id === state.requestId)) throw new Error('Closed maintenance request missing from summaries');
+        if (!documents.some(item => item.document_id === state.documentId)) throw new Error('Uploaded evidence missing from property list');
+        return `maintenance_summaries=${summaries.length}; evidence_documents=${documents.length}`;
+      });
+
+      button.disabled = false;
+    };
+
+    $('clearResults').onclick = resetChecks;
 
     async function guarded(button, resultId, action) {
       button.disabled = true;
-      try { show(resultId, await action()); }
-      catch (error) { show(resultId, `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      try { show(resultId, await action()); } catch (error) { show(resultId, `Error — ${error.message}`); } finally { button.disabled = false; }
     }
-
-    $('runAlerts').onclick = event => guarded(event.currentTarget, 'runResult', () =>
-      api(`/api/ops/rent-alerts/run?now=${encodeURIComponent(new Date().toISOString())}`, {
-        method: 'POST', headers: auth($('schedulerToken').value.trim())
-      })
-    );
-
+    $('runAlerts').onclick = event => guarded(event.currentTarget, 'runResult', () => api(`/api/ops/rent-alerts/run?now=${encodeURIComponent(new Date().toISOString())}`, {method: 'POST', headers: auth($('schedulerToken').value.trim())}));
     $('loadReviews').onclick = async event => {
       const button = event.currentTarget; button.disabled = true;
-      try {
-        const items = await api('/api/reviews', {headers: auth($('managerToken').value.trim())});
-        renderReviews(items);
-      } catch (error) { show('reviews', `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      try { renderReviews(await api('/api/reviews', {headers: auth($('managerToken').value.trim())})); }
+      catch (error) { show('reviews', `Error — ${error.message}`); } finally { button.disabled = false; }
     };
-
     function renderReviews(items) {
-      const host = $('reviews');
-      host.textContent = '';
+      const host = $('reviews'); host.textContent = '';
       if (!items.length) { host.textContent = 'No pending review items.'; return; }
       for (const item of items) {
         const card = document.createElement('div'); card.className = 'review';
@@ -141,31 +320,17 @@
         const approve = document.createElement('button'); approve.textContent = 'Approve exact text';
         const reject = document.createElement('button'); reject.textContent = 'Reject'; reject.className = 'danger';
         approve.onclick = () => decide(item, 'approved', content.value, null, card);
-        reject.onclick = () => {
-          const reason = window.prompt('Rejection reason (required):');
-          if (reason && reason.trim()) decide(item, 'rejected', null, reason.trim(), card);
-        };
-        card.append(title, document.createElement('br'), meta, content, approve, reject);
-        host.append(card);
+        reject.onclick = () => { const reason = window.prompt('Rejection reason (required):'); if (reason && reason.trim()) decide(item, 'rejected', null, reason.trim(), card); };
+        card.append(title, document.createElement('br'), meta, content, approve, reject); host.append(card);
       }
     }
-
     async function decide(item, decision, finalContent, reason, card) {
       const body = {expected_version: item.draft.version, decision};
-      if (decision === 'approved') body.final_content = finalContent;
-      else body.reason = reason;
-      try {
-        const result = await api(`/api/reviews/${encodeURIComponent(item.draft.draft_id)}/decision`, {
-          method: 'POST', headers: {...auth($('managerToken').value.trim()), 'Content-Type': 'application/json'}, body: JSON.stringify(body)
-        });
-        card.textContent = `${decision}: ${result.draft_id} version ${result.draft_version}`;
-      } catch (error) { window.alert(error.message); }
+      if (decision === 'approved') body.final_content = finalContent; else body.reason = reason;
+      try { const result = await api(`/api/reviews/${encodeURIComponent(item.draft.draft_id)}/decision`, {method: 'POST', headers: jsonHeaders($('managerToken').value.trim()), body: JSON.stringify(body)}); card.textContent = `${decision}: ${result.draft_id} version ${result.draft_version}`; }
+      catch (error) { window.alert(error.message); }
     }
-
-    $('dispatch').onclick = event => guarded(event.currentTarget, 'dispatchResult', () =>
-      api('/api/ops/notifications/dispatch', {method: 'POST', headers: auth($('schedulerToken').value.trim())})
-    );
-
+    $('dispatch').onclick = event => guarded(event.currentTarget, 'dispatchResult', () => api('/api/ops/notifications/dispatch', {method: 'POST', headers: auth($('schedulerToken').value.trim())}));
     $('loadInbox').onclick = async event => {
       const button = event.currentTarget; button.disabled = true;
       try {
@@ -178,8 +343,7 @@
           const meta = document.createElement('small'); meta.textContent = `${item.event_id} · ${item.delivered_at}`;
           box.append(content, meta); host.append(box);
         }
-      } catch (error) { show('inbox', `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      } catch (error) { show('inbox', `Error — ${error.message}`); } finally { button.disabled = false; }
     };
   </script>
 </body>

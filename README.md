@@ -75,8 +75,12 @@ Windows demonstration (creates an ignored local virtual environment/database):
 .\Start-RentMate.ps1
 ```
 
-Then open `http://127.0.0.1:8020/demo`. To run the complete automated suite
-instead of starting the server, use `.\Start-RentMate.ps1 -Verify`.
+Then open `http://127.0.0.1:8020` (it redirects to `/demo`). The **Run full
+system check** button executes one visible HTTP path across Health, Evidence,
+Maintenance, Communication, UC4/UC5, Review, Notification, Reporting and
+cross-property isolation, showing PASS/FAIL and the important IDs for every
+step. To run the complete command-line suite instead of starting the server,
+use `.\Start-RentMate.ps1 -Verify`.
 
 For a one-click final check, configure `backend/.env` with the Campus Qwen
 settings and double-click `Verify-RentMate.cmd`. It runs the complete
