@@ -78,6 +78,14 @@ Windows demonstration (creates an ignored local virtual environment/database):
 Then open `http://127.0.0.1:8020/demo`. To run the complete automated suite
 instead of starting the server, use `.\Start-RentMate.ps1 -Verify`.
 
+For a one-click final check, configure `backend/.env` with the Campus Qwen
+settings and double-click `Verify-RentMate.cmd`. It runs the complete
+deterministic suite, repeats the named integrated HTTP/review/delivery
+scenarios with readable output, and then runs the real-model acceptance check.
+The sanitised live result is written to `.runtime/live-result.json`. When the
+course proxy is intentionally unavailable, run
+`.\Verify-RentMate.ps1 -SkipLive` from PowerShell.
+
 Manual setup:
 
 ```bash

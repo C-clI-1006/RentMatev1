@@ -1,4 +1,7 @@
-param([switch]$Verify)
+param(
+    [switch]$Verify,
+    [switch]$Live
+)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
@@ -37,9 +40,35 @@ if ($LASTEXITCODE -ne 0) { throw 'Integrated demo seed failed' }
 
 if ($Verify) {
     $env:PYTHONDONTWRITEBYTECODE = '1'
+    Write-Host ''
+    Write-Host 'Stage 1/3 - Complete deterministic test suite'
     & $python -m pytest -q -p no:cacheprovider
     if ($LASTEXITCODE -ne 0) { throw 'Automated checks failed' }
-    Write-Host 'All automated checks passed.'
+
+    Write-Host ''
+    Write-Host 'Stage 2/3 - Named integrated acceptance scenarios'
+    & $python -m pytest -vv -p no:cacheprovider `
+        tests/test_integrated_app_routes.py `
+        tests/test_integrated_demo.py `
+        tests/test_notification.py
+    if ($LASTEXITCODE -ne 0) { throw 'Integrated acceptance checks failed' }
+
+    Write-Host ''
+    if ($Live) {
+        Write-Host 'Stage 3/3 - Live Campus Qwen acceptance'
+        $liveResult = Join-Path $runtimePath 'live-result.json'
+        & $python -m maintenance.verify_live --output $liveResult
+        if ($LASTEXITCODE -ne 0) {
+            throw "Live Campus Qwen acceptance failed. Result: $liveResult"
+        }
+        Write-Host "Live acceptance result: $liveResult"
+    } else {
+        Write-Host 'Stage 3/3 - Live Campus Qwen acceptance skipped'
+        Write-Host 'Use .\Start-RentMate.ps1 -Verify -Live when VPN and LLM settings are available.'
+    }
+
+    Write-Host ''
+    Write-Host 'PASS - RentMate automated and integrated checks completed.'
     exit 0
 }
 
