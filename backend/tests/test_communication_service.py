@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from communication import CommunicationOutcome, CommunicationService
+from communication import CommunicationOutcome, CommunicationService, policy
 from contracts import (
     DraftStatus,
     FactAvailability,
@@ -37,7 +37,7 @@ from contracts import (
     NotificationEvent,
 )
 from contracts.lease_rent import Fact, FactReference, LeaseRentFactResult
-from llm.classifier import BaseClassifier, Category, Classification
+from llm.classifier import BaseClassifier, Category, Classification, KeywordClassifier
 from shared import AuthContext
 from shared.sqlite import init_connection
 
@@ -234,6 +234,58 @@ def test_unknown_category_hands_off(db):
     assert outcome.routed_to == "human"
     assert outcome.category == "unknown"
     assert outcome.draft is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "The kitchen cupboard handle is loose but there is no immediate danger.",
+        "The bathroom tap is dripping.",
+        "The air conditioner stopped working last night.",
+    ],
+)
+def test_keyword_classifier_recognises_natural_maintenance_phrasing(content):
+    result = KeywordClassifier().classify(content)
+    assert result is not None
+    assert result.category is Category.MAINTENANCE
+    assert result.note == "keyword:maintenance"
+
+
+def test_natural_routine_maintenance_routes_to_maintenance_not_human(db):
+    outcome = make_service(db).handle_message(
+        AuthContext(TENANT, PROPERTY),
+        "The kitchen cupboard handle is loose but there is no immediate danger.",
+    )
+    assert outcome.category == "maintenance"
+    assert outcome.routed_to == "maintenance"
+    assert outcome.intake is not None
+    assert outcome.draft is not None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "There is a strong smell of gas in my kitchen.",
+        "I can smell gas in the apartment.",
+        "There is a gas leak in the kitchen.",
+        "The electrical outlet is sparking.",
+        "I am not sure whether I can smell gas.",
+    ],
+)
+def test_natural_emergency_phrasing_is_detected(content):
+    assert policy.has_emergency_indicator(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "There is no gas smell.",
+        "I cannot smell gas in the apartment.",
+        "There has been no hot water since yesterday. Cold water works and there is no gas smell.",
+    ],
+)
+def test_explicitly_negated_gas_smell_is_not_an_emergency(content):
+    assert not policy.has_emergency_indicator(content)
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +661,42 @@ def test_emergency_registered_requires_review(db):
     assert out.review.reason == "emergency"
     assert not out.emergency_alert.dispatched
     assert out.emergency_alert.failure == "no bound manager"
+
+
+def test_gas_smell_routes_to_maintenance_and_requires_manager_review(db):
+    bind_manager(db)
+    publisher = FakeNotification(NotificationStatus.ACCEPTED)
+    out = make_service(db, notification=publisher).handle_message(
+        AuthContext(TENANT, PROPERTY),
+        "There is a strong smell of gas in my kitchen.",
+    )
+
+    assert out.category == "maintenance"
+    assert out.routed_to == "maintenance"
+    assert out.draft.status is DraftStatus.PENDING_REVIEW
+    assert out.review.reason == "emergency"
+    assert out.emergency_alert is not None
+    assert out.emergency_alert.dispatched
+    assert len(publisher.published) == 1
+    assert publisher.published[0].kind.value == "manager_alert"
+    # ACCEPTED means queued only. The tenant projection must never claim that
+    # this alert or reply has already been delivered.
+    assert out.tenant_response()["delivery_status"] == "not_dispatched"
+
+
+def test_negated_gas_smell_does_not_publish_emergency_alert(db):
+    bind_manager(db)
+    publisher = FakeNotification(NotificationStatus.ACCEPTED)
+    out = make_service(db, notification=publisher).handle_message(
+        AuthContext(TENANT, PROPERTY),
+        "There has been no hot water since yesterday. Cold water works and there is no gas smell.",
+    )
+
+    assert out.category == "maintenance"
+    assert out.routed_to == "maintenance"
+    assert out.emergency_alert is None
+    assert publisher.published == []
+    assert out.tenant_response()["delivery_status"] == "not_dispatched"
 
 
 def test_unbound_scope_never_calls_dependencies(db):

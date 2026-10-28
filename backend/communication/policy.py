@@ -118,13 +118,35 @@ def decide(auto_eligible: bool, *triggers: ReviewReason) -> EligibilityDecision:
 # Explicit prototype coverage, not a semantic classifier. Unknown phrasing
 # falls back to review. These rules never use model confidence as authority.
 DEFAULT_EMERGENCY_TERMS = (
-    "fire", "smoke", "gas leak", "gas smell", "flood", "flooding",
+    "fire", "smoke", "gas leak", "gas smell", "smell of gas", "smell gas",
+    "flood", "flooding",
     "burst pipe", "sparking", "carbon monoxide", "no water", "no heat",
 )
 
 
 def has_emergency_indicator(text, terms=DEFAULT_EMERGENCY_TERMS):
-    return any(re.search(r"\b" + re.escape(term) + r"\b", text, re.I) for term in terms)
+    """Detect unnegated emergency phrases and conservatively escalate them.
+
+    Explicit local negations are removed per phrase. This prevents ``no gas
+    smell`` from raising an alert while still detecting a later positive claim
+    in the same message. Uncertain wording is not treated as a negation, so it
+    remains review-required rather than becoming automatically eligible.
+    """
+
+    searchable = " ".join(str(text).casefold().replace("’", "'").split())
+    for term in terms:
+        phrase = re.escape(term.casefold()).replace(r"\ ", r"\s+")
+        negated = re.compile(
+            r"(?:\bno\b|\bnot\b|\bwithout\b|\bcannot\b|\bcan't\b|"
+            r"\bdo\s+not\b|\bdon't\b|\bdid\s+not\b|\bdidn't\b)"
+            r"(?:\s+\w+){0,3}\s+" + phrase + r"\b",
+            re.I,
+        )
+        searchable = negated.sub(" ", searchable)
+    return any(
+        re.search(r"\b" + re.escape(term) + r"\b", searchable, re.I)
+        for term in terms
+    )
 
 
 def _normalise(text):
