@@ -23,6 +23,8 @@ from shared.sqlite import init_connection
     "description,expected",
     [
         ("No gas smell, smoke or fire.", False),
+        ("There is no injury, gas smell, smoke, flooding or immediate hazard.", False),
+        ("No injury, but there is a strong gas smell.", True),
         ("No hot water. Cold water is available.", False),
         ("There is no smoke but a strong gas smell.", True),
         ("No gas smell. Smoke is filling the room.", True),

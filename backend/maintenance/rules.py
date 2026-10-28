@@ -8,7 +8,7 @@ from llm.assess import DEFAULT_EMERGENCY_KEYWORDS
 # coordinated hazard list ("no gas smell, smoke or fire"). Contrast clauses
 # reset the denial. This is not a general natural-language safety classifier.
 DENIAL = re.compile(
-    r"\b(?:no|without|denies)\s+(?:(?:any|signs?|of|gas|smell|smoke|fire|flooding|flood|sparking|carbon|monoxide|and|or)\b[\s,]*)*$",
+    r"\b(?:no|without|denies)\s+(?:(?:any|signs?|of|injury|injuries|gas|smell|smoke|fire|flooding|flood|sparking|carbon|monoxide|and|or)\b[\s,]*)*$",
     re.IGNORECASE,
 )
 
