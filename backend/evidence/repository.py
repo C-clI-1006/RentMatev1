@@ -141,8 +141,8 @@ class EvidenceRepository:
                     INSERT INTO evidence_document (
                         document_id, tenant_id, property_id, original_filename,
                         file_type, size_bytes, storage_ref, upload_status,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'saved', ?, ?)
+                        created_at, updated_at, uploaded_by_manager_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'saved', ?, ?, ?)
                     """,
                     (
                         doc.document_id,
@@ -154,6 +154,7 @@ class EvidenceRepository:
                         doc.storage_ref,
                         doc.uploaded_at.isoformat(),
                         doc.updated_at.isoformat(),
+                        doc.uploaded_by_manager_id,
                     ),
                 )
                 # Classification machine starts PENDING (separate state
@@ -171,7 +172,7 @@ class EvidenceRepository:
     def advance_classification(
         self,
         document_id: str,
-        tenant_id: str,
+        tenant_id: str | None,
         property_id: str,
         status: str,
         *,
@@ -204,7 +205,7 @@ class EvidenceRepository:
                     WHERE document_id = ?
                       AND document_id IN (
                           SELECT document_id FROM evidence_document
-                          WHERE tenant_id = ? AND property_id = ?
+                          WHERE tenant_id IS ? AND property_id = ?
                       )
                     """,
                     (
@@ -224,7 +225,7 @@ class EvidenceRepository:
     def save_review(
         self,
         document_id: str,
-        tenant_id: str,
+        tenant_id: str | None,
         property_id: str,
         action: str,
         final_category: str,
@@ -263,7 +264,7 @@ class EvidenceRepository:
             with self._conn:
                 doc = self._conn.execute(
                     "SELECT 1 FROM evidence_document WHERE document_id = ? "
-                    "AND tenant_id = ? AND property_id = ?",
+                    "AND tenant_id IS ? AND property_id = ?",
                     (document_id, tenant_id, property_id),
                 ).fetchone()
                 if doc is None:
@@ -334,7 +335,7 @@ class EvidenceRepository:
 
     # -- property-scoped reads ---------------------------------------------
 
-    def list_documents(self, tenant_id: str, property_id: str) -> list[EvidenceDocumentRef]:
+    def list_documents(self, tenant_id: str | None, property_id: str) -> list[EvidenceDocumentRef]:
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -353,7 +354,7 @@ class EvidenceRepository:
                            d.rowid AS insertion_rowid
                     FROM evidence_document d
                     LEFT JOIN evidence_classification c ON c.document_id = d.document_id
-                    WHERE d.tenant_id = ? AND d.property_id = ?
+                    WHERE d.tenant_id IS ? AND d.property_id = ?
                 )
                 ORDER BY uploaded_at DESC, insertion_rowid DESC
                 """,
@@ -375,11 +376,22 @@ class EvidenceRepository:
                 for r in rows
             ]
 
-    def get_document(self, document_id: str, tenant_id: str, property_id: str) -> EvidenceDocument | None:
+    def list_documents_for_manager(self, property_id, manager_id):
+        self.require_manager_access(manager_id, property_id)
+        with self._lock:
+            ids = self._conn.execute(
+                "SELECT document_id FROM evidence_document WHERE property_id=? "
+                "ORDER BY created_at DESC, rowid DESC", (property_id,),
+            ).fetchall()
+            return [EvidenceDocumentRef.model_validate(
+                self.get_document_for_manager(row[0], property_id, manager_id).model_dump()
+            ) for row in ids]
+
+    def get_document(self, document_id: str, tenant_id: str | None, property_id: str) -> EvidenceDocument | None:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT d.document_id, d.tenant_id, d.property_id,
+                SELECT d.document_id, d.tenant_id, d.property_id, d.uploaded_by_manager_id,
                        d.original_filename, d.file_type, d.size_bytes,
                        d.storage_ref, d.upload_status,
                        COALESCE(c.status, 'pending') AS classification_status,
@@ -390,7 +402,7 @@ class EvidenceRepository:
                        c.details AS classification_details
                 FROM evidence_document d
                 LEFT JOIN evidence_classification c ON c.document_id = d.document_id
-                WHERE d.document_id = ? AND d.tenant_id = ? AND d.property_id = ?
+                WHERE d.document_id = ? AND d.tenant_id IS ? AND d.property_id = ?
                 """,
                 (document_id, tenant_id, property_id),
             ).fetchone()
@@ -421,7 +433,7 @@ class EvidenceRepository:
             self.require_manager_access(manager_id, property_id)
             row = self._conn.execute(
                 """
-                SELECT d.document_id, d.tenant_id, d.property_id,
+                SELECT d.document_id, d.tenant_id, d.property_id, d.uploaded_by_manager_id,
                        d.original_filename, d.file_type, d.size_bytes,
                        d.storage_ref, d.upload_status,
                        COALESCE(c.status, 'pending') AS classification_status,
@@ -451,6 +463,7 @@ class EvidenceRepository:
         return EvidenceDocument(
             document_id=row["document_id"],
             tenant_id=row["tenant_id"],
+            uploaded_by_manager_id=row["uploaded_by_manager_id"],
             property_id=row["property_id"],
             original_filename=row["original_filename"],
             file_type=row["file_type"],
@@ -496,7 +509,7 @@ class EvidenceRepository:
         }
 
     def get_classification(
-        self, document_id: str, tenant_id: str, property_id: str
+        self, document_id: str, tenant_id: str | None, property_id: str
     ) -> tuple[str, str | None] | None:
         """Machine classification outcome for one in-scope document:
         ``(status, classification_type)`` from `evidence_classification`
@@ -514,7 +527,7 @@ class EvidenceRepository:
                 WHERE c.document_id = ?
                   AND c.document_id IN (
                       SELECT document_id FROM evidence_document
-                      WHERE tenant_id = ? AND property_id = ?
+                      WHERE tenant_id IS ? AND property_id = ?
                   )
                 """,
                 (document_id, tenant_id, property_id),
@@ -523,7 +536,7 @@ class EvidenceRepository:
                 return None
             return row["status"], row["classification_type"]
 
-    def read_original(self, document_id: str, tenant_id: str, property_id: str) -> bytes | None:
+    def read_original(self, document_id: str, tenant_id: str | None, property_id: str) -> bytes | None:
         """Original bytes for a document in scope (None when absent)."""
         with self._lock:
             doc = self.get_document(document_id, tenant_id, property_id)
@@ -539,7 +552,7 @@ class EvidenceRepository:
 
     # -- binding checks (auth-owned tables, read-only) ----------------------
 
-    def has_tenant_access(self, tenant_id: str, property_id: str) -> bool:
+    def has_tenant_access(self, tenant_id: str | None, property_id: str) -> bool:
         """Tenant access to a property via the verified
         tenant<->property binding (mainline maintenance rule: any
         binding row counts, no role filter).
@@ -548,7 +561,7 @@ class EvidenceRepository:
         """
         with self._lock:
             row = self._conn.execute(
-                "SELECT 1 FROM tenant_property WHERE tenant_id = ? AND property_id = ?",
+                "SELECT 1 FROM tenant_property WHERE tenant_id IS ? AND property_id = ?",
                 (tenant_id, property_id),
             ).fetchone()
             return row is not None

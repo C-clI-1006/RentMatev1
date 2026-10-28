@@ -96,6 +96,7 @@ def test_invalid_reference_rejected_without_partial_writes(integrated, refs):
     store, _, manager, evidence, _, _, payload = integrated
     with store.transaction() as db:
         db.execute("INSERT INTO evidence_document "
+                   "(document_id,tenant_id,property_id,original_filename,file_type,size_bytes,storage_ref,upload_status,created_at,updated_at) "
                    "SELECT 'other-property','t2','p2',original_filename,file_type,size_bytes,storage_ref,"
                    "upload_status,created_at,updated_at FROM evidence_document WHERE document_id='ev1'")
     with pytest.raises(PermanentHandoffError) as exc:
@@ -259,6 +260,7 @@ def test_invalid_refs_cannot_enter_confirmation_or_close(integrated, refs):
     store, _, manager, _, rid, doc, _ = integrated
     with store.transaction() as db:
         db.execute("INSERT INTO evidence_document "
+                   "(document_id,tenant_id,property_id,original_filename,file_type,size_bytes,storage_ref,upload_status,created_at,updated_at) "
                    "SELECT 'other-property','t2','p2',original_filename,file_type,size_bytes,storage_ref,"
                    "upload_status,created_at,updated_at FROM evidence_document WHERE document_id='ev1'")
     assert command(manager, rid, S.APPROVED, 2).status == "applied"
@@ -321,7 +323,7 @@ def test_v3_database_upgrade_and_idempotency(tmp_path):
     for _ in range(2):
         upgraded = init_connection(path)
         try:
-            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 9
+            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 10
             assert upgraded.execute("SELECT count(*) FROM evidence_event_receipt").fetchone()[0] == 0
             assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:

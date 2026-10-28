@@ -35,6 +35,6 @@ class AuthContext:
     user input.
     """
 
-    tenant_id: TenantId
+    tenant_id: TenantId | None  # manager-only sessions do not impersonate a tenant
     property_id: PropertyId
     manager_id: str | None = None  # set for manager-facing entry points

@@ -10,7 +10,7 @@ bearer token is matched server-side against the JSON token map in the
 ``RENTMATE_AUTH_TOKENS`` env var (same pattern as the maintenance /
 review routers) and the identity fields come ONLY from that map:
 
-    tenant_id     (required in the map entry)
+    tenant_id     (required for tenant sessions; omitted for manager-only sessions)
     property_id   (required in the map entry)
     manager_id    (optional in the map entry)
 
@@ -108,10 +108,10 @@ def get_auth(
             ),
             None,
         )
-        if not account:
+        if not account or not (account.get("tenant_id") or account.get("manager_id")):
             raise ValueError()
         return AuthContext(
-            tenant_id=account["tenant_id"],
+            tenant_id=account.get("tenant_id"),
             property_id=account["property_id"],
             manager_id=account.get("manager_id"),
         )

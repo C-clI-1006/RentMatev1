@@ -23,6 +23,9 @@ which is the single `create_app()` call at the bottom of this file.
 from __future__ import annotations
 
 import os
+import json
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,6 +39,7 @@ load_dotenv(Path(__file__).with_name(".env"))
 from communication.api import ops_router as communication_ops_router  # noqa: E402
 from communication.api import router as communication_router  # noqa: E402
 from evidence.router import build_evidence_service, router as evidence_router  # noqa: E402
+from evidence.dispatch import EvidenceDispatcher, parse_managers  # noqa: E402
 from llm.classify import IDocumentClassifier  # noqa: E402
 from maintenance.api import router as maintenance_router  # noqa: E402
 from notification.api import ops_router as notification_ops_router  # noqa: E402
@@ -96,6 +100,8 @@ def create_app(
     storage_root: str | None = None,
     *,
     classifier: IDocumentClassifier | None = None,
+    evidence_dispatch_managers: dict[str, str] | None = None,
+    evidence_dispatch_interval: float = 1.0,
 ) -> FastAPI:
     """Build the FastAPI app with all currently mounted routers.
 
@@ -103,7 +109,25 @@ def create_app(
     first endpoints; the module's own wiring helper is called here too
     (kept in the module, not inlined, so main stays dependency-light).
     """
-    app = FastAPI(title="RentMate API", version="0.1.0")
+    managers = parse_managers(
+        os.environ.get("RENTMATE_EVIDENCE_DISPATCH_MANAGERS", "{}")
+        if evidence_dispatch_managers is None else json.dumps(evidence_dispatch_managers)
+    )
+    if not 0.05 <= evidence_dispatch_interval <= 3600:
+        raise ValueError("Evidence dispatch interval must be between 0.05 and 3600 seconds")
+
+    @asynccontextmanager
+    async def lifespan(app):
+        worker = app.state.evidence_dispatcher
+        if worker is not None:
+            worker.start()
+        try:
+            yield
+        finally:
+            if worker is not None:
+                await asyncio.to_thread(worker.stop)
+
+    app = FastAPI(title="RentMate API", version="0.1.0", lifespan=lifespan)
 
     db_path = db_path or os.environ.get("DATABASE_PATH", _DEFAULT_DB_PATH)
     storage_root = storage_root or os.environ.get("EVIDENCE_STORAGE_ROOT", _DEFAULT_STORAGE_ROOT)
@@ -123,6 +147,10 @@ def create_app(
     # Evidence uses server-side Bearer identities, tenant_property reads,
     # and manager_property authorization for independent manager reviews.
     app.state.evidence_service = build_evidence_service(db_path, storage_root, classifier=classifier)
+    app.state.evidence_dispatcher = (
+        EvidenceDispatcher(db_path, app.state.evidence_service, managers, evidence_dispatch_interval)
+        if managers else None
+    )
     app.include_router(evidence_router, prefix="/api")
 
     @app.get("/health")

@@ -13,9 +13,8 @@ AUTH NOTE (important, by design): identity arrives only via
 `shared.AuthContext` (tenant_id / property_id / manager_id), resolved
 server-side by the router from the bearer-token mapping — never from
 request bodies, query params or custom headers. Tenant operations
-(upload / list / get / download / text) require a verified
-`tenant_property` binding; manager review requires a verified
-`manager_property` binding through the permissions service (default
+require a verified `tenant_property` binding. Manager upload, reads and
+review require a verified `manager_property` binding (default
 deny, no tenant fallback). A denied check never degrades to a
 tenant-scope success.
 
@@ -134,10 +133,11 @@ class EvidenceService:
 
     def _check_scope(self, property_id: str, auth: AuthContext) -> None:
         """Verify the requested property is the auth context's property
-        and that the TENANT's access to it is verified
-        (`tenant_property` binding). Tenant upload / list / get /
-        download / text use this check; no manager binding is
-        required."""
+        and verify either the manager binding or the tenant binding.
+        A manager identity never falls back to tenant permissions."""
+        if auth.manager_id:
+            self._check_manager_scope(property_id, auth)
+            return
         if property_id != auth.property_id:
             raise EvidenceScopeError(
                 "forbidden",
@@ -195,7 +195,8 @@ class EvidenceService:
 
         doc = EvidenceDocument(
             document_id=document_id,
-            tenant_id=auth.tenant_id,
+            tenant_id=None if auth.manager_id else auth.tenant_id,
+            uploaded_by_manager_id=auth.manager_id,
             property_id=auth.property_id,
             original_filename=cmd.original_filename,
             file_type=validation.file_type,
@@ -370,22 +371,24 @@ class EvidenceService:
 
     def list_documents(self, property_id: str, auth: AuthContext) -> list[EvidenceDocumentRef]:
         self._check_scope(property_id, auth)
+        if auth.manager_id:
+            return self._repo.list_documents_for_manager(property_id, auth.manager_id)
         return self._repo.list_documents(auth.tenant_id, auth.property_id)
 
     def get_document(self, document_id: str, property_id: str, auth: AuthContext) -> EvidenceDocument:
         self._check_scope(property_id, auth)
-        doc = self._repo.get_document(document_id, auth.tenant_id, auth.property_id)
+        doc = (self._repo.get_document_for_manager(document_id, property_id, auth.manager_id)
+               if auth.manager_id else
+               self._repo.get_document(document_id, auth.tenant_id, auth.property_id))
         if doc is None:
             raise EvidenceScopeError("not_found", f"No document '{document_id}' in scope.")
         return doc
 
     def download(self, document_id: str, property_id: str, auth: AuthContext) -> DownloadPayload:
-        self._check_scope(property_id, auth)
-        content = self._repo.read_original(document_id, auth.tenant_id, auth.property_id)
+        doc = self.get_document(document_id, property_id, auth)
+        content = self._repo.read_original(document_id, doc.tenant_id, doc.property_id)
         if content is None:
             raise EvidenceScopeError("not_found", f"No document '{document_id}' in scope.")
-        doc = self._repo.get_document(document_id, auth.tenant_id, auth.property_id)
-        assert doc is not None  # content exists only for an in-scope document
         return DownloadPayload(document=doc, content=content)
 
     # -- property-scoped text extraction (READ-ONLY) ---------------------------
@@ -405,10 +408,12 @@ class EvidenceService:
         outcome that never deletes or modifies the stored original.
         """
         self._check_scope(property_id, auth)
-        doc = self._repo.get_document(document_id, auth.tenant_id, auth.property_id)
+        doc = (self._repo.get_document_for_manager(document_id, property_id, auth.manager_id)
+               if auth.manager_id else
+               self._repo.get_document(document_id, auth.tenant_id, auth.property_id))
         if doc is None:
             raise EvidenceScopeError("not_found", f"No document '{document_id}' in scope.")
-        content = self._repo.read_original(document_id, auth.tenant_id, auth.property_id)
+        content = self._repo.read_original(document_id, doc.tenant_id, doc.property_id)
         if content is None:
             raise EvidenceScopeError("not_found", f"No document '{document_id}' in scope.")
 
