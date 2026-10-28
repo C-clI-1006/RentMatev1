@@ -3,135 +3,467 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RentMate integrated demo</title>
+  <title>RentMate · System verification</title>
   <style>
-    :root { color-scheme: light; font-family: Inter, Segoe UI, sans-serif; color: #172033; background: #f4f6fb; }
+    :root {
+      color-scheme: light;
+      --ink: #172036;
+      --muted: #62708a;
+      --line: #dce3ee;
+      --soft: #f4f7fb;
+      --panel: #ffffff;
+      --navy: #172c5b;
+      --blue: #315fc7;
+      --blue-soft: #eaf0ff;
+      --green: #197451;
+      --green-soft: #edf9f3;
+      --red: #a63747;
+      --red-soft: #fff1f3;
+      --amber: #a66414;
+      --amber-soft: #fff7e9;
+      --shadow: 0 16px 42px rgba(23, 44, 91, .09);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #eef2f7;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; }
-    header { padding: 26px max(24px, calc((100% - 1120px)/2)); color: white; background: #263a76; }
-    header h1 { margin: 0 0 6px; font-size: 28px; }
-    header p { margin: 0; color: #dce4ff; }
-    main { max-width: 1120px; margin: 24px auto 48px; padding: 0 24px; }
-    .notice, section { background: white; border: 1px solid #dbe1ee; border-radius: 12px; box-shadow: 0 5px 16px #22345b12; }
-    .notice { padding: 14px 18px; margin-bottom: 18px; border-left: 5px solid #ef9b24; }
-    .credentials { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-    section { padding: 20px; margin: 16px 0; }
-    h2 { margin: 0 0 8px; font-size: 20px; }
-    p { line-height: 1.5; }
-    label { display: block; font-size: 13px; font-weight: 650; }
-    input, textarea { width: 100%; margin-top: 5px; border: 1px solid #bdc7da; border-radius: 7px; padding: 9px; font: inherit; }
-    textarea { min-height: 82px; resize: vertical; }
-    button, .link { display: inline-block; border: 0; border-radius: 7px; padding: 9px 14px; margin: 5px 7px 5px 0; font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; }
-    button { color: white; background: #3158b5; }
-    button.secondary, .link { color: #24458d; background: #e8eefc; }
-    button.danger { background: #a73b4a; }
-    button:disabled { opacity: .55; cursor: wait; }
-    .result { margin-top: 10px; padding: 10px 12px; min-height: 42px; white-space: pre-wrap; border-radius: 7px; background: #f3f5f9; color: #27334b; }
-    .review { margin-top: 12px; padding: 14px; border: 1px solid #dbe1ee; border-radius: 9px; }
-    .review small { color: #5d687d; }
-    .inbox-item { border-left: 4px solid #2b8a64; padding: 10px 12px; margin-top: 9px; background: #f0faf6; }
-    .flow { display: flex; flex-wrap: wrap; gap: 7px; color: #43516b; font-size: 14px; }
-    .flow span { padding: 6px 9px; border-radius: 99px; background: #edf1f8; }
-    @media (max-width: 760px) { .credentials { grid-template-columns: 1fr; } }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-width: 320px; }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid rgba(49,95,199,.28); outline-offset: 2px; }
+
+    .topbar { background: var(--navy); color: white; }
+    .topbar-inner { max-width: 1220px; margin: auto; padding: 17px 28px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 760; letter-spacing: -.01em; }
+    .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: white; color: var(--navy); font-size: 14px; }
+    .top-links { display: flex; gap: 8px; }
+    .top-links a { color: #dce7ff; text-decoration: none; font-size: 13px; padding: 7px 9px; border-radius: 7px; }
+    .top-links a:hover { background: rgba(255,255,255,.1); color: white; }
+
+    main { max-width: 1220px; margin: 0 auto; padding: 28px; }
+    .hero { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 34px; box-shadow: var(--shadow); display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .8fr); gap: 36px; align-items: center; }
+    .eyebrow { margin: 0 0 10px; color: var(--blue); font-size: 12px; font-weight: 780; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 760px; margin: 0; font-size: clamp(31px, 4vw, 50px); line-height: 1.05; letter-spacing: -.045em; }
+    .hero-copy { max-width: 720px; margin: 16px 0 22px; color: var(--muted); font-size: 17px; line-height: 1.65; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 730; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; }
+    .button:hover { transform: translateY(-1px); }
+    .button.primary { color: white; background: var(--blue); box-shadow: 0 8px 18px rgba(49,95,199,.22); padding: 13px 19px; }
+    .button.secondary { color: #294c9a; background: var(--blue-soft); }
+    .button.danger { color: white; background: var(--red); }
+    .button:disabled { opacity: .58; cursor: wait; transform: none; box-shadow: none; }
+    .run-note { color: var(--muted); font-size: 12px; }
+
+    .hero-side { border-left: 1px solid var(--line); padding-left: 32px; }
+    .hero-side h2 { margin: 0 0 14px; font-size: 15px; }
+    .flow-list { display: grid; gap: 11px; }
+    .flow-item { display: flex; gap: 11px; align-items: center; color: #33415c; font-size: 13px; }
+    .flow-number { width: 26px; height: 26px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--blue-soft); color: var(--blue); font-weight: 780; }
+
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 20px; margin-top: 20px; align-items: start; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 26px rgba(23,44,91,.055); }
+    .panel-header { padding: 20px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .panel-header h2 { margin: 0; font-size: 18px; letter-spacing: -.015em; }
+    .panel-header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .status-dot { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .status-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #aab5c7; }
+    .checks { padding: 12px; display: grid; gap: 8px; min-height: 240px; }
+    .empty-state { min-height: 214px; display: grid; place-items: center; text-align: center; padding: 35px; color: var(--muted); background: var(--soft); border-radius: 11px; }
+    .empty-icon { width: 46px; height: 46px; margin: 0 auto 12px; display: grid; place-items: center; border-radius: 14px; background: var(--blue-soft); color: var(--blue); font-weight: 800; }
+    .check { display: grid; grid-template-columns: 74px minmax(190px, .9fr) minmax(260px, 1.4fr); gap: 13px; align-items: start; padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: white; }
+    .check.pass { border-color: #bfe3d2; background: var(--green-soft); }
+    .check.fail { border-color: #efc5cb; background: var(--red-soft); }
+    .check.running { border-color: #ecd49b; background: var(--amber-soft); }
+    .badge { width: fit-content; padding: 4px 7px; border-radius: 6px; color: #5f6c83; background: #e9edf3; font-size: 10px; font-weight: 820; letter-spacing: .07em; }
+    .pass .badge { color: var(--green); background: #d8f1e5; }
+    .fail .badge { color: var(--red); background: #f8dce0; }
+    .running .badge { color: var(--amber); background: #f6e5bc; }
+    .check > div:nth-child(2) { font-weight: 680; font-size: 13px; padding-top: 2px; }
+    .detail { color: #56637a; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+    .side-stack { position: sticky; top: 18px; display: grid; gap: 16px; }
+    .summary-card { padding: 20px; }
+    .summary-card h2 { margin: 0 0 5px; font-size: 16px; }
+    .summary-card > p { margin: 0 0 18px; color: var(--muted); font-size: 12px; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .metric { padding: 11px 7px; text-align: center; border-radius: 10px; background: var(--soft); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .metric strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 24px; line-height: 1; letter-spacing: -.04em; }
+    .metric.pass strong { color: var(--green); }
+    .metric.fail strong { color: var(--red); }
+    .coverage { margin-top: 18px; display: grid; gap: 8px; }
+    .coverage-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: #46536a; }
+    .coverage-row span:last-child { color: var(--green); font-weight: 750; }
+
+    details.settings, details.manual { overflow: hidden; }
+    details summary { list-style: none; cursor: pointer; }
+    details summary::-webkit-details-marker { display: none; }
+    .settings summary, .manual > summary { padding: 17px 20px; display: flex; align-items: center; justify-content: space-between; font-weight: 730; font-size: 14px; }
+    .settings summary::after, .manual > summary::after { content: "+"; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: var(--soft); color: var(--blue); }
+    .settings[open] summary::after, .manual[open] > summary::after { content: "−"; }
+    .settings-body { padding: 0 20px 20px; border-top: 1px solid var(--line); }
+    .settings-body p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .credentials { display: grid; gap: 10px; }
+    label { display: block; color: #4c5a72; font-size: 11px; font-weight: 680; }
+    input, textarea { width: 100%; margin-top: 4px; border: 1px solid #cbd5e3; border-radius: 8px; padding: 8px 9px; color: var(--ink); background: white; }
+
+    .module-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+    .module-card { padding: 16px; }
+    .module-card strong { display: block; margin-bottom: 6px; font-size: 13px; }
+    .module-card span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .module-icon { width: 30px; height: 30px; margin-bottom: 12px; display: grid; place-items: center; border-radius: 9px; background: var(--blue-soft); color: var(--blue); font-size: 11px; font-weight: 800; }
+
+    .manual { margin-top: 20px; }
+    .manual-body { padding: 0 20px 20px; border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .tool { padding-top: 18px; }
+    .tool h3 { margin: 0 0 6px; font-size: 14px; }
+    .tool p { min-height: 50px; margin: 0 0 9px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .tool-output { margin-top: 8px; max-height: 200px; overflow: auto; padding: 10px; border-radius: 8px; background: var(--soft); color: #4b5870; white-space: pre-wrap; font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .review { margin-top: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; }
+    .review small { color: var(--muted); }
+    .inbox-item { margin-top: 7px; padding: 9px; border-left: 3px solid var(--green); background: var(--green-soft); }
+    .support { margin: 20px 0 6px; display: flex; justify-content: space-between; align-items: center; gap: 16px; color: var(--muted); font-size: 12px; }
+    .support-links { display: flex; flex-wrap: wrap; gap: 8px; }
+    .support a { color: #294c9a; text-decoration: none; font-weight: 680; padding: 7px 9px; border-radius: 7px; background: var(--blue-soft); }
+
+    @media (max-width: 960px) {
+      .hero { grid-template-columns: 1fr; }
+      .hero-side { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }
+      .workspace { grid-template-columns: 1fr; }
+      .side-stack { position: static; grid-template-columns: 1fr 1fr; }
+      .module-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 680px) {
+      .top-links { display: none; }
+      main { padding: 16px; }
+      .hero { padding: 24px; border-radius: 15px; }
+      .check { grid-template-columns: 66px 1fr; }
+      .detail { grid-column: 1 / -1; }
+      .side-stack, .manual-body { grid-template-columns: 1fr; }
+      .module-grid { grid-template-columns: 1fr 1fr; }
+      .support { align-items: flex-start; flex-direction: column; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>RentMate integrated demo</h1>
-    <p>UC4/UC5 scheduled detection → manager review → durable delivery → tenant inbox</p>
-  </header>
+  <nav class="topbar" aria-label="Primary">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-mark">RM</span><span>RentMate · Stage 2</span></div>
+      <div class="top-links"><a href="#verification">Verification</a><a href="#modules">Coverage</a><a href="/docs">API docs</a></div>
+    </div>
+  </nav>
+
   <main>
-    <div class="notice"><strong>Local prototype only.</strong> The fixed tokens below are demo credentials created by <code>Start-RentMate.ps1</code>; never use them in deployment.</div>
-
-    <section>
-      <h2>Demo credentials</h2>
-      <div class="credentials">
-        <label>Scheduler token<input id="schedulerToken" value="scheduler-demo"></label>
-        <label>Manager token<input id="managerToken" value="manager-demo"></label>
-        <label>Tenant token<input id="tenantToken" value="tenant-demo"></label>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Local acceptance console</p>
+        <h1>Verify the complete rental workflow in one run.</h1>
+        <p class="hero-copy">A single guided check exercises every mounted module through real HTTP boundaries, then reports the exact IDs, outcomes and access-control decisions used as evidence.</p>
+        <div class="actions">
+          <button class="button primary" id="runFullDemo">Run full system check</button>
+          <button class="button secondary" id="clearResults">Clear results</button>
+          <span class="run-note">Synthetic local data · safe to demonstrate</span>
+        </div>
       </div>
+      <aside class="hero-side">
+        <h2>What this run proves</h2>
+        <div class="flow-list">
+          <div class="flow-item"><span class="flow-number">1</span><span>Tenant evidence and maintenance intake</span></div>
+          <div class="flow-item"><span class="flow-number">2</span><span>Manager lifecycle and property isolation</span></div>
+          <div class="flow-item"><span class="flow-number">3</span><span>UC4/UC5 review-controlled communication</span></div>
+          <div class="flow-item"><span class="flow-number">4</span><span>Truthful delivery and monthly reporting</span></div>
+        </div>
+      </aside>
     </section>
 
-    <section>
-      <h2>1. Prepare overdue-rent and lease-deadline drafts</h2>
-      <p>The trusted scheduler reads persisted records and creates idempotent, traceable drafts. It does not send them.</p>
-      <button id="runAlerts">Run scheduled checks</button>
-      <div class="result" id="runResult">Not run yet.</div>
+    <div class="workspace" id="verification">
+      <section class="panel">
+        <div class="panel-header">
+          <div><h2>Verification timeline</h2><p>Each row is a real request across the local FastAPI application.</p></div>
+          <span class="status-dot">Ready</span>
+        </div>
+        <div id="fullChecks" class="checks" aria-live="polite">
+          <div class="empty-state"><div><div class="empty-icon">13</div><strong>Thirteen checks are ready</strong><br><small>Start the run to see evidence appear here.</small></div></div>
+        </div>
+      </section>
+
+      <aside class="side-stack">
+        <section class="panel summary-card">
+          <h2>Run summary</h2>
+          <p>Results update as each boundary completes.</p>
+          <div class="metrics">
+            <div class="metric pass"><strong id="passCount">0</strong>passed</div>
+            <div class="metric fail"><strong id="failCount">0</strong>failed</div>
+            <div class="metric"><strong id="totalCount">0</strong>done</div>
+          </div>
+          <div class="coverage">
+            <div class="coverage-row"><span>HTTP boundaries</span><span>✓</span></div>
+            <div class="coverage-row"><span>Property scope</span><span>✓</span></div>
+            <div class="coverage-row"><span>Idempotency</span><span>✓</span></div>
+            <div class="coverage-row"><span>Audit persistence</span><span>✓</span></div>
+          </div>
+        </section>
+
+        <details class="panel settings">
+          <summary>Demo credentials</summary>
+          <div class="settings-body">
+            <p>Local tokens created by <code>Start-RentMate.ps1</code>. Never use them outside this prototype.</p>
+            <div class="credentials">
+              <label>Scheduler<input id="schedulerToken" value="scheduler-demo"></label>
+              <label>Manager<input id="managerToken" value="manager-demo"></label>
+              <label>Tenant<input id="tenantToken" value="tenant-demo"></label>
+              <label>Other-property manager<input id="otherManagerToken" value="manager-other-demo"></label>
+            </div>
+          </div>
+        </details>
+      </aside>
+    </div>
+
+    <section class="module-grid" id="modules" aria-label="Module coverage">
+      <article class="panel module-card"><div class="module-icon">EV</div><strong>Evidence</strong><span>Upload, classify, validate and preserve property ownership.</span></article>
+      <article class="panel module-card"><div class="module-icon">MT</div><strong>Maintenance</strong><span>Assess priority, advance lifecycle and retain event history.</span></article>
+      <article class="panel module-card"><div class="module-icon">LR</div><strong>Lease &amp; rent</strong><span>Detect overdue rent and upcoming lease deadlines idempotently.</span></article>
+      <article class="panel module-card"><div class="module-icon">RV</div><strong>Review</strong><span>Bind approval or rejection to one exact draft version.</span></article>
+      <article class="panel module-card"><div class="module-icon">CM</div><strong>Communication</strong><span>Route tenant questions without claiming premature delivery.</span></article>
+      <article class="panel module-card"><div class="module-icon">NT</div><strong>Notification</strong><span>Dispatch approved content once through a durable inbox.</span></article>
+      <article class="panel module-card"><div class="module-icon">RP</div><strong>Reporting</strong><span>Generate traceable monthly structure and optional narrative.</span></article>
+      <article class="panel module-card"><div class="module-icon">AC</div><strong>Access control</strong><span>Conceal cross-property records with default-deny checks.</span></article>
     </section>
 
-    <section>
-      <h2>2. Manager review</h2>
-      <p>Only the exact approved draft version may enter the delivery queue. Rejected drafts are never sent.</p>
-      <button id="loadReviews">Load pending reviews</button>
-      <div id="reviews" class="result">No reviews loaded.</div>
-    </section>
-
-    <section>
-      <h2>3. Dispatch approved messages</h2>
-      <p>The dispatcher is the single retry owner. Accepted means queued; only a durable inbox write becomes delivered.</p>
-      <button id="dispatch">Dispatch notifications</button>
-      <div class="result" id="dispatchResult">Not dispatched yet.</div>
-    </section>
-
-    <section>
-      <h2>4. Tenant inbox</h2>
-      <button id="loadInbox">Load delivered messages</button>
-      <div id="inbox" class="result">No messages loaded.</div>
-    </section>
-
-    <section>
-      <h2>Other integrated modules</h2>
-      <div class="flow">
-        <span>Maintenance</span><span>Evidence</span><span>Review</span>
-        <span>Lease &amp; rent</span><span>Reporting</span><span>Notification</span>
+    <details class="panel manual">
+      <summary>Manual demonstration controls</summary>
+      <div class="manual-body">
+        <div class="tool">
+          <h3>Scheduled detection</h3>
+          <p>Run UC4/UC5 independently to inspect candidate and reuse counts.</p>
+          <button class="button secondary" id="runAlerts">Run scheduled checks</button>
+          <div class="tool-output" id="runResult">Not run yet.</div>
+        </div>
+        <div class="tool">
+          <h3>Manager review</h3>
+          <p>Open pending drafts and approve or reject their exact versions.</p>
+          <button class="button secondary" id="loadReviews">Load pending reviews</button>
+          <div id="reviews" class="tool-output">No reviews loaded.</div>
+        </div>
+        <div class="tool">
+          <h3>Delivery evidence</h3>
+          <p>Dispatch approved messages, then inspect the scoped tenant inbox.</p>
+          <button class="button secondary" id="dispatch">Dispatch</button>
+          <button class="button secondary" id="loadInbox">Load inbox</button>
+          <div class="tool-output" id="dispatchResult">Not dispatched yet.</div>
+          <div id="inbox" class="tool-output">No messages loaded.</div>
+        </div>
       </div>
-      <p>
-        <a class="link" href="/api/maintenance/demo">Maintenance demo</a>
-        <a class="link" href="/docs">Interactive API documentation</a>
-        <a class="link" href="/health">Health check</a>
-      </p>
-    </section>
+    </details>
+
+    <footer class="support">
+      <span>Local prototype · fixed demo identities · no production delivery provider</span>
+      <div class="support-links"><a href="/api/maintenance/demo">Maintenance detail</a><a href="/docs">API documentation</a><a href="/health">Health</a></div>
+    </footer>
   </main>
 
   <script>
     const $ = id => document.getElementById(id);
     const auth = token => ({Authorization: `Bearer ${token}`});
+    const jsonHeaders = token => ({...auth(token), 'Content-Type': 'application/json'});
     const show = (id, value) => { $(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); };
 
-    async function api(path, options = {}) {
+    async function request(path, options = {}) {
       const response = await fetch(path, options);
       const text = await response.text();
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
-      if (!response.ok) throw new Error(`${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
-      return data;
+      if (!response.ok) {
+        const error = new Error(`${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+      return {status: response.status, data};
     }
+
+    async function api(path, options = {}) { return (await request(path, options)).data; }
+
+    let totals = {pass: 0, fail: 0};
+    function resetChecks() {
+      totals = {pass: 0, fail: 0};
+      $('passCount').textContent = '0'; $('failCount').textContent = '0'; $('totalCount').textContent = '0';
+      $('fullChecks').replaceChildren();
+    }
+    function updateTotals() {
+      $('passCount').textContent = totals.pass; $('failCount').textContent = totals.fail;
+      $('totalCount').textContent = totals.pass + totals.fail;
+    }
+    function compact(value) {
+      const text = typeof value === 'string' ? value : JSON.stringify(value);
+      return text.length > 520 ? text.slice(0, 517) + '...' : text;
+    }
+    async function check(name, action) {
+      const row = document.createElement('div'); row.className = 'check running';
+      const badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = 'RUNNING';
+      const label = document.createElement('div'); label.textContent = name;
+      const detail = document.createElement('div'); detail.className = 'detail'; detail.textContent = 'Request in progress';
+      row.append(badge, label, detail); $('fullChecks').append(row);
+      try {
+        const result = await action();
+        row.className = 'check pass'; badge.textContent = 'PASS'; detail.textContent = compact(result);
+        totals.pass += 1; updateTotals(); return result;
+      } catch (error) {
+        row.className = 'check fail'; badge.textContent = 'FAIL'; detail.textContent = error.message;
+        totals.fail += 1; updateTotals(); return null;
+      }
+    }
+    function requireValue(value, message) { if (!value) throw new Error(message); return value; }
+
+    $('runFullDemo').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true; resetChecks();
+      const scheduler = $('schedulerToken').value.trim();
+      const manager = $('managerToken').value.trim();
+      const tenant = $('tenantToken').value.trim();
+      const otherManager = $('otherManagerToken').value.trim();
+      const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const state = {};
+
+      await check('Application health', async () => {
+        const result = await request('/health');
+        if (result.data.status !== 'ok') throw new Error('Health response was not ok');
+        return `HTTP ${result.status}; status=ok`;
+      });
+
+      await check('Evidence upload and classification', async () => {
+        const form = new FormData();
+        form.append('property_id', 'demo-property');
+        form.append('file', new Blob(['Synthetic completion evidence for the RentMate full-system demonstration.'], {type: 'text/plain'}), `demo-${runId}.txt`);
+        const result = await request('/api/evidence/documents', {method: 'POST', headers: auth(tenant), body: form});
+        if (result.data.status !== 'accepted') throw new Error(`Evidence was not accepted: ${compact(result.data)}`);
+        state.documentId = requireValue(result.data.document && result.data.document.document_id, 'Upload returned no document_id');
+        return `HTTP ${result.status}; document_id=${state.documentId}; classification=${result.data.document.classification_status || 'recorded'}`;
+      });
+
+      await check('Maintenance intake and Qwen assessment', async () => {
+        const result = await request('/api/maintenance/requests', {
+          method: 'POST', headers: {...jsonHeaders(tenant), 'Idempotency-Key': `full-demo-${runId}`},
+          body: JSON.stringify({title: 'Loose kitchen cupboard handle', description: 'The handle is loose, but the cupboard still works. There is no injury, gas smell, smoke, flooding or immediate hazard.', location: 'Kitchen', evidence_refs: [state.documentId]})
+        });
+        state.requestId = requireValue(result.data.request_id, 'Maintenance intake returned no request_id');
+        return `HTTP ${result.status}; request_id=${state.requestId}; intake=${result.data.status}`;
+      });
+
+      await check('Manager reads and controls maintenance', async () => {
+        let record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        if (record.status === 'under_review') {
+          await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}/assessment`, {
+            method: 'POST', headers: jsonHeaders(manager),
+            body: JSON.stringify({expected_version: record.version, priority: 'routine', rationale: 'Manual fallback for the synthetic safe demo case.'})
+          });
+          record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        }
+        for (const target of ['approved', 'in_progress', 'awaiting_confirmation', 'closed']) {
+          await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}/status`, {
+            method: 'POST', headers: jsonHeaders(manager),
+            body: JSON.stringify({expected_version: record.version, target_status: target, reason: `Full demo transition to ${target}`, evidence_refs: [state.documentId]})
+          });
+          record = (await request(`/api/maintenance/requests/${encodeURIComponent(state.requestId)}`, {headers: auth(manager)})).data;
+        }
+        if (record.status !== 'closed') throw new Error(`Expected closed, received ${record.status}`);
+        return `request=${state.requestId}; status=closed; priority=${record.priority}; events=${record.events.length}`;
+      });
+
+      await check('Evidence reference ownership', async () => {
+        const result = await request('/api/evidence/references/validate', {
+          method: 'POST', headers: jsonHeaders(tenant), body: JSON.stringify({property_id: 'demo-property', evidence_refs: [state.documentId]})
+        });
+        return `HTTP ${result.status}; property-scoped reference accepted`;
+      });
+
+      await check('Tenant communication routing', async () => {
+        const result = await request('/api/communication/messages', {
+          method: 'POST', headers: jsonHeaders(tenant), body: JSON.stringify({content: 'When does my current lease end?'})
+        });
+        state.messageId = requireValue(result.data.message_id, 'Communication returned no message_id');
+        if (result.data.delivery_status !== 'not_dispatched') throw new Error('Communication incorrectly claimed delivery');
+        return `message_id=${state.messageId}; reply=${result.data.reply_status}; delivery=not_dispatched`;
+      });
+
+      await check('Maintenance event handoff to Communication', async () => {
+        const result = await request('/api/ops/communication/maintenance-events/run', {method: 'POST', headers: auth(scheduler)});
+        return `processed=${result.data.processed}; handed_off=${result.data.handed_off}; retry=${result.data.retry}; rejected=${result.data.rejected}`;
+      });
+
+      await check('UC4/UC5 scheduled detection', async () => {
+        const now = encodeURIComponent(new Date().toISOString());
+        const first = (await request(`/api/ops/rent-alerts/run?now=${now}`, {method: 'POST', headers: auth(scheduler)})).data;
+        const second = (await request(`/api/ops/rent-alerts/run?now=${now}`, {method: 'POST', headers: auth(scheduler)})).data;
+        if (second.drafts_created !== 0) throw new Error(`Idempotent rerun created ${second.drafts_created} drafts`);
+        state.alertRun = first;
+        return `first created=${first.drafts_created}; rent=${first.rent_candidates}; lease=${first.lease_candidates}; rerun created=0`;
+      });
+
+      await check('Cross-property manager isolation', async () => {
+        const response = await fetch('/api/reviews/demo-review-draft', {headers: auth(otherManager)});
+        if (response.status !== 404) throw new Error(`Expected concealed 404, received HTTP ${response.status}`);
+        return 'Other-property manager received concealed HTTP 404 for a property-1 draft';
+      });
+
+      await check('Manager approval and rejection', async () => {
+        const queue = (await request('/api/reviews', {headers: auth(manager)})).data;
+        const rent = queue.find(item => item.draft.source_kind === 'rent_reminder');
+        const lease = queue.find(item => item.draft.source_kind === 'lease_deadline');
+        if (!rent || !lease) throw new Error('Expected pending rent and lease drafts; restart the demo to reset fixed data');
+        await request(`/api/reviews/${encodeURIComponent(rent.draft.draft_id)}/decision`, {
+          method: 'POST', headers: jsonHeaders(manager), body: JSON.stringify({expected_version: rent.draft.version, decision: 'approved', final_content: rent.draft.content})
+        });
+        await request(`/api/reviews/${encodeURIComponent(lease.draft.draft_id)}/decision`, {
+          method: 'POST', headers: jsonHeaders(manager), body: JSON.stringify({expected_version: lease.draft.version, decision: 'rejected', reason: 'Synthetic full-demo rejection'})
+        });
+        state.approvedDraftId = rent.draft.draft_id;
+        return `approved=${rent.draft.draft_id}; rejected=${lease.draft.draft_id}`;
+      });
+
+      await check('Notification dispatch and exact tenant inbox', async () => {
+        const dispatched = (await request('/api/ops/notifications/dispatch', {method: 'POST', headers: auth(scheduler)})).data;
+        const inbox = (await request('/api/notifications/inbox', {headers: auth(tenant)})).data;
+        const expectedEvent = `draft:${state.approvedDraftId}:v1`;
+        if (!inbox.some(item => item.event_id === expectedEvent)) throw new Error(`Approved event ${expectedEvent} was not delivered`);
+        return `processed=${dispatched.processed}; delivered=${dispatched.delivered}; inbox_items=${inbox.length}; approved event found`;
+      });
+
+      await check('Monthly report generation and history', async () => {
+        const now = new Date(); const year = now.getUTCFullYear(); const month = now.getUTCMonth() + 1;
+        const generated = (await request('/api/ops/monthly-reports/run', {
+          method: 'POST', headers: jsonHeaders(scheduler), body: JSON.stringify({property_id: 'demo-property', year, month})
+        })).data;
+        const history = (await request(`/api/manager/monthly-reports?property_id=demo-property&year=${year}&month=${month}`, {headers: auth(manager)})).data;
+        if (!history.length) throw new Error('Generated report was absent from manager history');
+        const report = requireValue(generated.report, 'Generation returned no report record');
+        return `report_id=${report.report_id}; outcome=${report.outcome}; narrative=${report.narrative.source}; reused=${generated.reused}; history=${history.length}`;
+      });
+
+      await check('Final audit views remain readable', async () => {
+        const summaries = (await request('/api/maintenance/summaries', {headers: auth(manager)})).data;
+        const documents = (await request('/api/evidence/documents?property_id=demo-property', {headers: auth(tenant)})).data;
+        if (!summaries.some(item => item.request_id === state.requestId)) throw new Error('Closed maintenance request missing from summaries');
+        if (!documents.some(item => item.document_id === state.documentId)) throw new Error('Uploaded evidence missing from property list');
+        return `maintenance_summaries=${summaries.length}; evidence_documents=${documents.length}`;
+      });
+
+      button.disabled = false;
+    };
+
+    $('clearResults').onclick = resetChecks;
 
     async function guarded(button, resultId, action) {
       button.disabled = true;
-      try { show(resultId, await action()); }
-      catch (error) { show(resultId, `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      try { show(resultId, await action()); } catch (error) { show(resultId, `Error — ${error.message}`); } finally { button.disabled = false; }
     }
-
-    $('runAlerts').onclick = event => guarded(event.currentTarget, 'runResult', () =>
-      api(`/api/ops/rent-alerts/run?now=${encodeURIComponent(new Date().toISOString())}`, {
-        method: 'POST', headers: auth($('schedulerToken').value.trim())
-      })
-    );
-
+    $('runAlerts').onclick = event => guarded(event.currentTarget, 'runResult', () => api(`/api/ops/rent-alerts/run?now=${encodeURIComponent(new Date().toISOString())}`, {method: 'POST', headers: auth($('schedulerToken').value.trim())}));
     $('loadReviews').onclick = async event => {
       const button = event.currentTarget; button.disabled = true;
-      try {
-        const items = await api('/api/reviews', {headers: auth($('managerToken').value.trim())});
-        renderReviews(items);
-      } catch (error) { show('reviews', `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      try { renderReviews(await api('/api/reviews', {headers: auth($('managerToken').value.trim())})); }
+      catch (error) { show('reviews', `Error — ${error.message}`); } finally { button.disabled = false; }
     };
-
     function renderReviews(items) {
-      const host = $('reviews');
-      host.textContent = '';
+      const host = $('reviews'); host.textContent = '';
       if (!items.length) { host.textContent = 'No pending review items.'; return; }
       for (const item of items) {
         const card = document.createElement('div'); card.className = 'review';
@@ -141,31 +473,17 @@
         const approve = document.createElement('button'); approve.textContent = 'Approve exact text';
         const reject = document.createElement('button'); reject.textContent = 'Reject'; reject.className = 'danger';
         approve.onclick = () => decide(item, 'approved', content.value, null, card);
-        reject.onclick = () => {
-          const reason = window.prompt('Rejection reason (required):');
-          if (reason && reason.trim()) decide(item, 'rejected', null, reason.trim(), card);
-        };
-        card.append(title, document.createElement('br'), meta, content, approve, reject);
-        host.append(card);
+        reject.onclick = () => { const reason = window.prompt('Rejection reason (required):'); if (reason && reason.trim()) decide(item, 'rejected', null, reason.trim(), card); };
+        card.append(title, document.createElement('br'), meta, content, approve, reject); host.append(card);
       }
     }
-
     async function decide(item, decision, finalContent, reason, card) {
       const body = {expected_version: item.draft.version, decision};
-      if (decision === 'approved') body.final_content = finalContent;
-      else body.reason = reason;
-      try {
-        const result = await api(`/api/reviews/${encodeURIComponent(item.draft.draft_id)}/decision`, {
-          method: 'POST', headers: {...auth($('managerToken').value.trim()), 'Content-Type': 'application/json'}, body: JSON.stringify(body)
-        });
-        card.textContent = `${decision}: ${result.draft_id} version ${result.draft_version}`;
-      } catch (error) { window.alert(error.message); }
+      if (decision === 'approved') body.final_content = finalContent; else body.reason = reason;
+      try { const result = await api(`/api/reviews/${encodeURIComponent(item.draft.draft_id)}/decision`, {method: 'POST', headers: jsonHeaders($('managerToken').value.trim()), body: JSON.stringify(body)}); card.textContent = `${decision}: ${result.draft_id} version ${result.draft_version}`; }
+      catch (error) { window.alert(error.message); }
     }
-
-    $('dispatch').onclick = event => guarded(event.currentTarget, 'dispatchResult', () =>
-      api('/api/ops/notifications/dispatch', {method: 'POST', headers: auth($('schedulerToken').value.trim())})
-    );
-
+    $('dispatch').onclick = event => guarded(event.currentTarget, 'dispatchResult', () => api('/api/ops/notifications/dispatch', {method: 'POST', headers: auth($('schedulerToken').value.trim())}));
     $('loadInbox').onclick = async event => {
       const button = event.currentTarget; button.disabled = true;
       try {
@@ -178,8 +496,7 @@
           const meta = document.createElement('small'); meta.textContent = `${item.event_id} · ${item.delivered_at}`;
           box.append(content, meta); host.append(box);
         }
-      } catch (error) { show('inbox', `Error — ${error.message}`); }
-      finally { button.disabled = false; }
+      } catch (error) { show('inbox', `Error — ${error.message}`); } finally { button.disabled = false; }
     };
   </script>
 </body>

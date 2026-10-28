@@ -32,6 +32,7 @@ $env:RENTMATE_SCHEDULER_TOKEN = 'scheduler-demo'
 $env:RENTMATE_AUTH_TOKENS = @{
     'tenant-demo' = @{tenant_id='demo-tenant'; property_id='demo-property'}
     'manager-demo' = @{tenant_id='demo-tenant'; property_id='demo-property'; manager_id='demo-manager'}
+    'manager-other-demo' = @{tenant_id='demo-tenant-2'; property_id='demo-property-2'; manager_id='demo-manager-2'}
 } | ConvertTo-Json -Compress
 
 Set-Location $backendPath

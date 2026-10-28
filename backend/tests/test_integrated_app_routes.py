@@ -27,6 +27,9 @@ def test_all_team_route_families_are_mounted_together(tmp_path):
         }
         assert expected <= paths, f"missing integrated routes: {sorted(expected - paths)}"
         with TestClient(app) as client:
+            home = client.get("/", follow_redirects=False)
+            assert home.status_code == 307
+            assert home.headers["location"] == "/demo"
             page = client.get("/demo")
             assert page.status_code == 200
             assert "UC4/UC5 scheduled detection" in page.text

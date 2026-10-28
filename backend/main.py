@@ -27,7 +27,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 # Load backend/.env before importing business modules that read env
 # config (evidence wiring, llm adapter) and before the service is built.
@@ -128,6 +128,10 @@ def create_app(
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    def home():
+        return RedirectResponse(url="/demo")
 
     @app.get("/demo", include_in_schema=False)
     def integrated_demo():
