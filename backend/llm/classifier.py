@@ -16,6 +16,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+import re
 
 
 class Category(str, Enum):
@@ -54,10 +55,15 @@ class KeywordClassifier(BaseClassifier):
     """
 
     MAINTENANCE_KEYWORDS = (
-        "leak", "broken", "not working", "no hot water", "no water",
+        "leak", "leaking", "leaky", "broken", "not working", "no hot water", "no water",
         "no heat", "no power", "plumbing", "electric", "flood",
         "mould", "mold", "repair", "fix it", "door won", "window won",
         "appliance", "stove", "oven", "fridge", "toilet", "heater",
+        "cupboard handle", "cabinet handle", "handle is loose", "handle loose",
+        "loose handle", "tap dripping", "tap is dripping", "dripping tap",
+        "faucet dripping", "faucet is dripping", "dripping faucet",
+        "air conditioner", "air conditioning", "stopped working",
+        "gas smell", "smell of gas", "smell gas", "sparking outlet",
     )
     LEASE_RENT_KEYWORDS = (
         "rent", "lease", "payment", "paid", "invoice", "bill",
@@ -67,15 +73,21 @@ class KeywordClassifier(BaseClassifier):
     SMALLTALK_KEYWORDS = ("hi", "hello", "thanks", "thank you", "good morning")
 
     def classify(self, content: str) -> Classification | None:
-        lowered = content.lower()
+        lowered = " ".join(content.casefold().split())
         for kw in self.LEASE_RENT_KEYWORDS:
-            if kw in lowered:
+            if self._contains_phrase(lowered, kw):
                 return Classification(Category.LEASE_RENT, 0.8, "keyword:lease_rent")
         for kw in self.MAINTENANCE_KEYWORDS:
-            if kw in lowered:
+            if self._contains_phrase(lowered, kw):
                 return Classification(Category.MAINTENANCE, 0.8, "keyword:maintenance")
         for kw in self.SMALLTALK_KEYWORDS:
-            if kw in lowered:
+            if self._contains_phrase(lowered, kw):
                 return Classification(Category.SMALLTALK, 0.9, "keyword:smalltalk")
         # No signal at all -> ambiguous: let the service hand off.
         return Classification(Category.UNKNOWN, 0.2, "no keyword signal")
+
+    @staticmethod
+    def _contains_phrase(text: str, phrase: str) -> bool:
+        """Match whole words without pretending this heuristic is an LLM."""
+
+        return bool(re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", text))
