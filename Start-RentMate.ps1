@@ -34,6 +34,10 @@ $env:RENTMATE_AUTH_TOKENS = @{
     'manager-demo' = @{tenant_id='demo-tenant'; property_id='demo-property'; manager_id='demo-manager'}
     'manager-other-demo' = @{tenant_id='demo-tenant-2'; property_id='demo-property-2'; manager_id='demo-manager-2'}
 } | ConvertTo-Json -Compress
+$env:RENTMATE_EVIDENCE_DISPATCH_MANAGERS = @{
+    'demo-property' = 'demo-manager'
+    'demo-property-2' = 'demo-manager-2'
+} | ConvertTo-Json -Compress
 
 Set-Location $backendPath
 & $python -m scripts.seed_integrated_demo --database $env:DATABASE_PATH

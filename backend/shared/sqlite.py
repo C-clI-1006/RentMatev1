@@ -36,7 +36,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _TENANT_INBOX_DDL = """
 CREATE TABLE IF NOT EXISTS tenant_inbox (
@@ -344,6 +344,49 @@ def _ensure_v9_manager_inbox(conn: Connection) -> None:
     conn.executescript(_MANAGER_INBOX_DDL)
 
 
+def _ensure_v10_manager_evidence(conn: Connection) -> None:
+    """Preserve existing evidence and child records while allowing manager ownership."""
+    columns = conn.execute("PRAGMA table_info(evidence_document)").fetchall()
+    if not columns or any(row[1] == "uploaded_by_manager_id" for row in columns):
+        return
+    # Rebuild without renaming the old table: child foreign keys retain their target.
+    conn.commit()
+    foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        ddl = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='evidence_document'"
+        ).fetchone()[0]
+        import re
+        ddl = re.sub(r"(?i)CREATE TABLE(?: IF NOT EXISTS)?\s+evidence_document",
+                     "CREATE TABLE evidence_document_v10", ddl, count=1)
+        ddl = re.sub(r"(?i)(tenant_id\s+TEXT)\s+NOT NULL", r"\1", ddl)
+        ddl = ddl.rstrip().removesuffix(")") + (
+            ", uploaded_by_manager_id TEXT REFERENCES manager(manager_id))"
+        )
+        indexes = [row[0] for row in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name='evidence_document' "
+            "AND type IN ('index','trigger') AND sql IS NOT NULL"
+        )]
+        conn.execute(ddl)
+        names = "rowid, " + ", ".join('"' + row[1] + '"' for row in columns)
+        conn.execute(f"INSERT INTO evidence_document_v10 ({names}) "
+                     f"SELECT {names} FROM evidence_document")
+        conn.execute("DROP TABLE evidence_document")
+        conn.execute("ALTER TABLE evidence_document_v10 RENAME TO evidence_document")
+        for statement in indexes:
+            conn.execute(statement)
+        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise RuntimeError("Evidence ownership upgrade failed foreign-key validation")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute(f"PRAGMA foreign_keys={foreign_keys}")
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
@@ -354,6 +397,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     7: _ensure_v7_opaque_draft_request_reference,
     8: _ensure_v8_communication_maintenance_receipts,
     9: _ensure_v9_manager_inbox,
+    10: _ensure_v10_manager_evidence,
 }
 
 

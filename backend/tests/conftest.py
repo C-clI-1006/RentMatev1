@@ -13,6 +13,7 @@ _env = patch.dict(os.environ, {
     "EVIDENCE_STORAGE_ROOT": str(Path(_sandbox.name) / "storage"),
     "RENTMATE_AUTH_TOKENS": "{}",
     "RENTMATE_SCHEDULER_TOKEN": "",
+    "RENTMATE_EVIDENCE_DISPATCH_MANAGERS": "{}",
     "LLM_BASE_URL": "",
     "LLM_API_KEY": "",
     "LLM_MODEL": "test-only",

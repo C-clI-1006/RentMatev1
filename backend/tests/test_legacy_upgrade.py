@@ -238,7 +238,7 @@ def test_init_connection_upgrades_legacy_db_to_due_date(tmp_path):
 
     # 3. The manager and due-date migrations remain ordered, followed by
     #    the Evidence event receipt/timeline tables in v4.
-    assert SCHEMA_VERSION == 9
+    assert SCHEMA_VERSION == 10
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # 4. The migration chain that predated this step is untouched.
@@ -522,7 +522,7 @@ def test_divergent_migration_histories_converge_without_data_loss(tmp_path, bran
             conn.execute("PRAGMA user_version=3")
         else:
             conn.execute(
-                "INSERT INTO evidence_document VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO evidence_document (document_id,tenant_id,property_id,original_filename,file_type,size_bytes,storage_ref,upload_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     "doc-kept",
                     TENANT,
@@ -558,7 +558,7 @@ def test_divergent_migration_histories_converge_without_data_loss(tmp_path, bran
             assert (
                 upgraded.execute("PRAGMA user_version").fetchone()[0]
                 == SCHEMA_VERSION
-                == 9
+                == 10
             )
             assert _rent_rows(upgraded) == before
             assert (
@@ -722,7 +722,7 @@ def test_v7_decouples_draft_from_legacy_maintenance_storage(tmp_path):
 
     upgraded = init_connection(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 10
         assert not any(
             row[3] == "request_id"
             for row in upgraded.execute("PRAGMA foreign_key_list(draft)")

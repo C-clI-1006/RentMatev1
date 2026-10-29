@@ -300,7 +300,8 @@ CREATE INDEX IF NOT EXISTS idx_manager_inbox_scope
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS evidence_document (
     document_id       TEXT PRIMARY KEY,
-    tenant_id         TEXT NOT NULL REFERENCES tenant(tenant_id),
+    tenant_id         TEXT REFERENCES tenant(tenant_id),
+    uploaded_by_manager_id TEXT REFERENCES manager(manager_id),
     property_id       TEXT NOT NULL REFERENCES property(property_id),
     original_filename TEXT NOT NULL,
     file_type         TEXT NOT NULL, -- normalised extension, e.g. "pdf"

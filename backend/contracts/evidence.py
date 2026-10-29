@@ -12,11 +12,10 @@ Rules:
   fail-closed: a failure is recorded as `FAILED` (never a guessed
   category), the upload stays `SAVED`/`accepted` either way, and a
   `source="stub"` result is never presented as live-model inference.
-- `tenant_id` / `property_id` always come from the auth context
-  (shared.AuthContext); the tenant<->property binding is verified at the
-  entry point. NOTE: the repo currently has no real auth component —
-  until one lands, these checks are scope checks against a prototype
-  AuthContext, NOT real authorisation (see README / module docstring).
+- Tenant uploads retain the verified tenant identity. Manager uploads
+  have no tenant owner and retain uploaded_by_manager_id from the verified
+  server-side manager identity. Property access is checked against the
+  corresponding tenant_property or manager_property binding.
 - Query and download are property-scoped: a manager may only read
   documents bound to a property the auth context authorises.
 - Text extraction (this increment) is READ-ONLY: it never advances
@@ -152,7 +151,8 @@ class EvidenceDocument(BaseModel):
     """
 
     document_id: EvidenceId
-    tenant_id: TenantId  # from auth context
+    tenant_id: TenantId | None  # null for a manager-owned upload
+    uploaded_by_manager_id: str | None = None
     property_id: PropertyId  # from auth context; binding verified
     original_filename: str  # as uploaded (display only)
     file_type: str  # normalised extension, e.g. "pdf"

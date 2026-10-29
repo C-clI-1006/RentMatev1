@@ -1,11 +1,12 @@
 # Evidence / Maintenance Integration Contract
 
-The local implementation and temporary-database regression tests are complete. Joint review and deployment wiring with the Maintenance owner remain pending. The implementation reuses MaintenanceEvent and does not introduce an HTTP event ingestion endpoint.
+The receiver and property-scoped background dispatch wiring are implemented and covered by temporary-database tests. Final deployment and partner sign-off remain separate acceptance steps. The implementation reuses MaintenanceEvent and does not introduce an HTTP event ingestion endpoint.
 
 ## Identity and evidence IDs
 
 Use the document_id returned by a successful upload in evidence_refs. New IDs are UUID4 strings; existing stored string IDs remain supported. Never pass local file paths. References must identify saved evidence records in the same property.
 
+- Manager upload and document reads use verified manager_property access, without a tenant binding. Manager-owned documents have tenant_id=null and uploaded_by_manager_id set to the verified manager ID; residents do not inherit access to these documents. SQLite migration v10 preserves existing tenant-owned evidence and its child records.
 - Managers require a verified manager_id and manager_property binding and may reference saved evidence in their assigned property.
 - Tenants require a tenant_property binding and may reference only their own uploaded evidence.
 - The callback is a trusted in-process integration boundary. AuthContext must come from server-side session resolution or trusted configuration, never payload.actor, recipient_id, or client identity fields.
@@ -66,13 +67,13 @@ not_received is not a permanent rejection record and does not prove an in-flight
 
 A successful event has one receipt, one timeline entry, and unique document links. Linked document queries return association=associated. This covers Maintenance event links and the Maintenance timeline, not lease association, a general frontend timeline, or production login.
 
-No background dispatcher or second sender was added. Other outbox consumers retain their existing behavior. Deployment still requires trusted property-scoped adapter wiring and agreement on operational handling of rejected events.
+The application lifecycle runs a property-scoped background dispatcher when trusted manager mappings are configured. It reuses Maintenance dispatch_pending without adding another sender or changing its return/exception contract. Other outbox consumers retain their existing behavior. Rejected events still require operational review.
 
 ## Reporting main integration (2026-10-25)
 
 The integration with main b8f86474b792d2986452f8597457a29ae7b6b06b retains both the monthly scheduler router and manager reporting router alongside Evidence, Maintenance, Review, health, and rent-alert endpoints. Evidence event reception, document links, timeline queries, receipts, and pre-closure validation remain implemented.
 
-The combined schema version is 5. Historical main version 3 installed report snapshots, while Evidence version 3 added rent due_date and version 4 added event persistence. Version 5 reconciles these histories before schema indexes run: it checks due_date and creates the reporting tables idempotently. Existing reports, rent rows, manager bindings, receipts, timeline entries, and evidence links are preserved. Fresh and historical databases are tested only in temporary storage. Automatic background dispatch remains outside this integration.
+The combined schema version is 5. Historical main version 3 installed report snapshots, while Evidence version 3 added rent due_date and version 4 added event persistence. Version 5 reconciles these histories before schema indexes run: it checks due_date and creates the reporting tables idempotently. Existing reports, rent rows, manager bindings, receipts, timeline entries, and evidence links are preserved. Fresh and historical databases are tested only in temporary storage. Automatic background dispatch was outside that historical integration; the current lifecycle wiring is described below.
 
 ## Implementation and validation history
 
@@ -99,3 +100,51 @@ Before delivery, the local branch and remote branch both pointed to 2a5d894939ea
 No features were added during delivery review. The reviewer message was kept outside the repository; technical contracts and validation records were retained. The full backend suite was rerun with Python 3.12.14: 293 passed, 1 warning, 48.37s. Whitespace checks passed. No live Qwen calls, sensitive configuration reads, or real database operations were performed.
 
 Delivery commit 275c718a10ccdb45ba0fd3fb0e5749907fd2af5f was pushed normally to jenny/scrum-8-document-upload. No force push or PR merge was performed. Joint integration review and deployment validation remain pending.
+
+
+## Background dispatch configuration (2026-10-28)
+
+Set RENTMATE_EVIDENCE_DISPATCH_MANAGERS to a JSON object mapping property IDs to
+receiving manager IDs in trusted deployment configuration. An empty object disables
+this worker. Start-RentMate.ps1 configures the two fictional demo property/manager
+pairs automatically. Ordinary application deployments must configure their own
+verified bindings; the worker does not infer authority from event.actor or tokens
+supplied by clients. Binding removal leaves pending events untouched.
+
+The worker starts and stops with the FastAPI lifespan and polls every second.
+It calls the existing Maintenance dispatch_pending with only the Evidence adapter
+and an explicit property filter. It does not consume Communication outbox rows,
+call an LLM, or alter the Maintenance event model, sender, state transitions or
+public API. The adapter persists receipts, links and timeline entries before True.
+
+Before retry, the worker checks durable receipts. Matching accepted content confirms
+handoff without duplicate timeline entries; conflicting content is rejected. A local
+synchronous callback that has unwound with an uncertain result can be retried after
+verified receipt absence. Processing rows or pre-existing uncertain rows without a
+receipt remain untouched: an operator must first verify the previous invocation is
+no longer running before reconciling absence. Restart alone does not prove that.
+
+For a manual demonstration, upload evidence and pass its document_id to the existing
+Maintenance workflow. After a status change, query the existing manager-only
+GET /api/evidence/maintenance-timeline with the request_id and property_id. Poll until
+the event appears, then query its receipt and the linked document. No manual dispatch
+call is needed when background dispatch is configured and bindings are valid.
+This remains a Maintenance event timeline, not a general graphical property timeline.
+
+New application wiring is in backend/main.py and Start-RentMate.ps1; dispatch and
+recovery logic is in backend/evidence/dispatch.py. No Maintenance-owned sender or
+shared event contract was changed in this step. These changes are local and have not
+updated the previously exported candidate package or received final partner sign-off.
+
+Validation of the combined local manager-upload and background-dispatch fixes:
+Python 3.12.14, `python -m pytest backend/tests -q` completed with 415 passed,
+zero failures, and one existing Starlette/httpx deprecation warning (148.62s).
+This includes 14 new dispatcher regressions. The lifecycle integration test performs
+real HTTP Maintenance state changes and queries Evidence timeline, receipt and linked
+document endpoints without manually invoking dispatch. Other coverage includes
+duplicate-safe replay, role/consumer isolation, definite retry, permanent rejection,
+timeout before/after receipt persistence, conflicting receipts, restart ambiguity,
+invalid configuration and worker shutdown. Database/storage paths are temporary,
+inference is explicitly stubbed, dotenv is disabled, and external sockets are blocked.
+Working-tree and staged git diff --check and PowerShell launcher syntax checks passed.
+No live model call, private database operation, commit or push was performed.
