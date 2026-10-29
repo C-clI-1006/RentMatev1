@@ -31,6 +31,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 # Load backend/.env before importing business modules that read env
 # config (evidence wiring, llm adapter) and before the service is built.
@@ -41,6 +42,7 @@ from communication.api import router as communication_router  # noqa: E402
 from evidence.router import build_evidence_service, router as evidence_router  # noqa: E402
 from evidence.dispatch import EvidenceDispatcher, parse_managers  # noqa: E402
 from llm.classify import IDocumentClassifier  # noqa: E402
+from llm.settings_api import router as llm_settings_router  # noqa: E402
 from maintenance.api import router as maintenance_router  # noqa: E402
 from notification.api import ops_router as notification_ops_router  # noqa: E402
 from notification.api import router as notification_router  # noqa: E402
@@ -143,6 +145,7 @@ def create_app(
     app.include_router(notification_ops_router)
     app.include_router(communication_router)
     app.include_router(communication_ops_router)
+    app.include_router(llm_settings_router)
 
     # Evidence uses server-side Bearer identities, tenant_property reads,
     # and manager_property authorization for independent manager reviews.
@@ -159,7 +162,13 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def home():
-        return RedirectResponse(url="/demo")
+        return RedirectResponse(url="/app")
+
+    app.mount("/app-assets", StaticFiles(directory=_DEMO_PAGE.parent), name="app-assets")
+
+    @app.get("/app", include_in_schema=False)
+    def business_app():
+        return FileResponse(_DEMO_PAGE.with_name("app.html"))
 
     @app.get("/demo", include_in_schema=False)
     def integrated_demo():

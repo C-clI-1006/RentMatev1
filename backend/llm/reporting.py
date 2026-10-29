@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from contracts.reporting import NarrativeSource, ReportNarrative
 from reporting.collector import CollectedReportData
 from shared import utcnow
+from .configuration import get_configuration
 
 
 class _NarrativeOutput(BaseModel):
@@ -22,9 +23,8 @@ class LlmReportNarrator:
     """Generate prose only; failures return an explicit missing narrative."""
 
     def __call__(self, data: CollectedReportData) -> ReportNarrative:
-        base = os.getenv("LLM_BASE_URL", "").rstrip("/")
-        key = os.getenv("LLM_API_KEY", "")
-        model = os.getenv("LLM_MODEL", "")
+        configuration = get_configuration()
+        base, key, model = configuration.base_url.rstrip("/"), configuration.api_key, configuration.model
         if not all((base, key, model)):
             return ReportNarrative(source=NarrativeSource.MISSING)
         facts = data.model_dump(mode="json")

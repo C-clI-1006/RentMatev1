@@ -52,7 +52,9 @@ class MessageResponse(BaseModel):
 
 
 def get_connection(request: Request) -> Iterator[sqlite3.Connection]:
-    connection = init_connection(request.app.state.db_path)
+    # Synchronous dependencies and endpoints can run in different pool workers.
+    # The connection remains request-scoped and is closed by this dependency.
+    connection = init_connection(request.app.state.db_path, check_same_thread=False)
     try:
         yield connection
     finally:

@@ -1,4 +1,18 @@
-# Frontend / integrated demonstration
+# Business portal and technical demonstration
+
+`/app` is the primary business portal. It is a no-build HTML/CSS/ES-module
+client served by the same FastAPI process. `/` redirects to `/app`.
+Tenant and manager navigation use real authorized backend APIs; role selection
+does not grant permissions. Enter the launcher's token and its matching property
+in Session settings. Tokens stay in tab memory and are cleared on reload.
+Operations require a separately entered scheduler token.
+
+See [DEMO_GUIDE.md](DEMO_GUIDE.md) for exact startup commands and the complete
+interactive presentation, [FRONTEND_API_INVENTORY.md](FRONTEND_API_INVENTORY.md)
+for actual API schemas and gaps, [FRONTEND_WORKFLOW_MATRIX.md](FRONTEND_WORKFLOW_MATRIX.md)
+for coverage, and [FRONTEND_TEST_RESULTS.md](FRONTEND_TEST_RESULTS.md) for verification.
+
+## Technical dashboard (preserved)
 
 `index.html` is a no-build demonstration console served by FastAPI at
 `/demo`. It exercises the real UC4/UC5 scheduler, manager review, durable

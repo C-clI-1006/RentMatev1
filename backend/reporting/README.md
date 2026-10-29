@@ -93,7 +93,12 @@ task from PowerShell:
 .\Register-Monthly-Reports.ps1
 ```
 
-The default schedule is day 1 at 02:00. To choose another time:
+The default schedule is day 1 at 02:00 Australia/Sydney. Registration requires
+the Windows machine timezone `AUS Eastern Standard Time`; the script fails
+visibly on a different zone. Python selects the previous month using IANA
+`Australia/Sydney`, including DST and year boundaries, while log timestamps
+remain UTC. Windows installs `tzdata` through the project requirements.
+To choose another time:
 
 ```powershell
 .\Register-Monthly-Reports.ps1 -StartTime '03:30'
@@ -122,6 +127,13 @@ process exit non-zero so Task Scheduler records a failed run. The machine must
 be powered on and the configured user must be logged on under the default
 school/demo registration; a production deployment should register the same
 runner under its service account and use its persistent database path.
+
+Real Task Scheduler execution has not been verified on this macOS development
+machine. See `docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md` for the Windows
+acceptance procedure and required evidence. Browser AI settings affect only
+the running web server; the separate monthly process uses its environment or
+`backend/.env`. The existing source-data interval contract remains unchanged;
+the timezone correction here selects the scheduler's intended calendar month.
 
 ## Manager entrypoints
 

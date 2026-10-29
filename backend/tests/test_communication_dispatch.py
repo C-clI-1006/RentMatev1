@@ -1,4 +1,5 @@
 from communication import CommunicationService
+import json
 from contracts import (
     ILeaseRentQuery,
     IMaintenanceIntake,
@@ -151,6 +152,51 @@ def test_auto_dispatch_delivery_failure_is_persisted():
         assert db.execute(
             "SELECT action FROM audit WHERE action='delivery.failed'"
         ).fetchone()
+    finally:
+        db.close()
+
+
+def test_routine_communication_revoked_tenant_binding_blocks_dispatch_and_audits():
+    """Queue while authorised, revoke, then dispatch against CURRENT bindings."""
+    db = _db()
+    try:
+        outcome = _service(db).handle_message(AuthContext("t1", "p1"), "hello")
+        event_id = f"reply:{outcome.message_id}"
+        assert outcome.draft.status.value == "auto_eligible"
+        assert db.execute(
+            "SELECT status FROM notification_event WHERE event_id=?", (event_id,)
+        ).fetchone()[0] == "accepted"
+        db.execute("DELETE FROM tenant_property WHERE tenant_id='t1' AND property_id='p1'")
+        db.commit()
+
+        class RecordingInbox(SQLiteNotificationInboxAdapter):
+            calls = 0
+
+            def deliver(self, **kwargs):
+                self.calls += 1
+                return super().deliver(**kwargs)
+
+        adapter = RecordingInbox(db)
+        result = dispatch_one(db, event_id, "t1", adapter)
+        assert result.status.value == "failed"
+        assert result.detail == "recipient is no longer authorised for property"
+        assert result.attempts == 1
+        assert adapter.calls == 0
+        assert db.execute("SELECT COUNT(*) FROM tenant_inbox").fetchone()[0] == 0
+        row = db.execute(
+            "SELECT status,last_error FROM notification_event WHERE event_id=?", (event_id,)
+        ).fetchone()
+        assert tuple(row) == ("failed", result.detail)
+        audit = db.execute(
+            "SELECT details FROM audit WHERE event_id=? AND action='delivery.failed'", (event_id,)
+        ).fetchone()
+        assert json.loads(audit[0])["reason"] == "recipient_property_authorization_denied"
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit WHERE event_id=? AND action='delivery.delivered'", (event_id,)
+        ).fetchone()[0] == 0
+        # A retry cannot accidentally deliver this permanently denied event.
+        assert dispatch_one(db, event_id, "t1", adapter).status.value == "failed"
+        assert adapter.calls == 0
     finally:
         db.close()
 

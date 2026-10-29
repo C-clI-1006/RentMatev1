@@ -22,6 +22,7 @@ import re
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+from .configuration import get_configuration
 
 
 class Category(str, Enum):
@@ -118,9 +119,10 @@ class QwenClassifier(BaseClassifier):
 
     def __init__(self, *, base_url: str | None = None, api_key: str | None = None,
                  model: str | None = None):
-        self._base_url = (base_url or os.getenv("LLM_BASE_URL", "")).strip()
-        self._api_key = (api_key or os.getenv("LLM_API_KEY", "")).strip()
-        self._model = (model or os.getenv("LLM_MODEL", "")).strip()
+        configuration = get_configuration()
+        self._base_url = (base_url or configuration.base_url).strip()
+        self._api_key = (api_key or configuration.api_key).strip()
+        self._model = (model or configuration.model).strip()
 
     @property
     def configured(self) -> bool:

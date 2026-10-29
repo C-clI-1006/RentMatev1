@@ -31,6 +31,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from shared import utcnow
+from .configuration import get_configuration
 
 #: Closed category vocabulary (UC6, Stage 1 Ch.16). `unknown` is the
 #: model's own "I cannot tell" answer and still counts as a USEABLE
@@ -200,9 +201,10 @@ class QwenDocumentClassifier:
         model: str | None = None,
         timeout_s: float | None = None,
     ) -> None:
-        self._base_url = (base_url or os.environ.get("LLM_BASE_URL", "")).strip()
-        self._api_key = (api_key if api_key is not None else os.environ.get("LLM_API_KEY", "")).strip()
-        self._model = (model or os.environ.get("LLM_MODEL", "")).strip() or _DEFAULT_MODEL
+        configuration = get_configuration()
+        self._base_url = (base_url or configuration.base_url).strip()
+        self._api_key = (api_key if api_key is not None else configuration.api_key).strip()
+        self._model = (model or configuration.model).strip() or _DEFAULT_MODEL
         self._timeout_s = float(
             timeout_s if timeout_s is not None else os.environ.get("LLM_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS)
         )
@@ -375,6 +377,15 @@ class _HttpError(Exception):
         self.detail = detail
 
 
+class RuntimeDocumentClassifier(IDocumentClassifier):
+    """Snapshot current settings per upload, including after operator updates."""
+
+    source = "llm"
+
+    def classify(self, *, text: str, filename: str, file_type: str):
+        return QwenDocumentClassifier().classify(text=text, filename=filename, file_type=file_type)
+
+
 def build_document_classifier() -> IDocumentClassifier:
     """Default wiring: the live Qwen adapter.
 
@@ -384,4 +395,4 @@ def build_document_classifier() -> IDocumentClassifier:
     LLM_BASE_URL / LLM_API_KEY every call fails closed to manual
     review.
     """
-    return QwenDocumentClassifier()
+    return RuntimeDocumentClassifier()

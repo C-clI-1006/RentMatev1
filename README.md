@@ -22,10 +22,21 @@ Run `Start-RentMate.cmd` for the integrated local demonstration. The older
 Live Qwen is configured through the environment; unavailable inference fails
 closed or enters manual review rather than silently pretending success.
 
+On macOS, run `bash Start-RentMate.sh` or double-click `Start-RentMate.command`.
+The primary business portal is `/app`; the technical verification console is
+preserved at `/demo`. Model address, key and model name can be entered using
+the protected local **AI settings** dialog. Browser configuration is held in
+the web server process only; separate monthly jobs use environment/`.env`.
+
+Team handoff: [Chinese end-to-end testing guide (PDF)](output/pdf/RentMate_全组全链路演示与测试说明_20261030.pdf),
+[editable Chinese source](docs/全组全链路演示与测试说明.md),
+[English demo guide](frontend/DEMO_GUIDE.md), and
+[live model acceptance](docs/LIVE_MODEL_ACCEPTANCE.md).
+
 ## Stack
 
 - Backend: Python 3.11+, FastAPI, SQLite (modular monolith, no microservices)
-- Frontend: no-build integrated demo console; API boundary supports a later React client
+- Frontend: no-build tenant/manager business portal plus technical verification console
 - LLM: school Qwen proxy via a single `backend/llm/` adapter; labelled test
   doubles are used until the proxy connection is confirmed.
 
@@ -75,12 +86,26 @@ Windows demonstration (creates an ignored local virtual environment/database):
 .\Start-RentMate.ps1
 ```
 
-Then open `http://127.0.0.1:8020` (it redirects to `/demo`). The **Run full
+Then open `http://127.0.0.1:8020` (it redirects to `/app`). Use `/demo` for the **Run full
 system check** button executes one visible HTTP path across Health, Evidence,
 Maintenance, Communication, UC4/UC5, Review, Notification, Reporting and
 cross-property isolation, showing PASS/FAIL and the important IDs for every
 step. To run the complete command-line suite instead of starting the server,
 use `.\Start-RentMate.ps1 -Verify`.
+
+Mac equivalents:
+
+```sh
+bash Start-RentMate.sh                       # start /app
+bash Start-RentMate.sh --no-seed             # preserve prepared demo state
+bash Start-RentMate.sh --verify --no-seed    # deterministic + integration tests
+bash Start-RentMate.sh --monthly-run         # execute the monthly batch now
+```
+
+The monthly batch selects the previous Australia/Sydney calendar month and
+records results in `.runtime/monthly-report-runs.jsonl`. It does not register a
+macOS launchd/cron task. Windows automatic scheduling still requires the
+[Windows acceptance procedure](docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md).
 
 For a one-click final check, configure `backend/.env` with the Campus Qwen
 settings and double-click `Verify-RentMate.cmd`. It runs the complete
