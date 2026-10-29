@@ -360,6 +360,11 @@ def _authorised_tenant_payload(
         and approval["status"] in ("approved", "sent")
         and approval["final_content"] == content
     )
+    if not approved and row["message_id"] and kind in (
+        NotificationKind.OTHER,
+        NotificationKind.LEASE_RENT_REPLY,
+    ):
+        return _authorised_communication_auto_payload(connection, row, payload, kind)
     auto_eligible_maintenance = False
     if not approved and kind is NotificationKind.MAINTENANCE_STATUS:
         draft = connection.execute(
@@ -395,6 +400,118 @@ def _authorised_tenant_payload(
     if authorised is None:
         raise PermanentDeliveryError("recipient is no longer authorised for property")
     return payload
+
+
+def _authorised_communication_auto_payload(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: dict,
+    kind: NotificationKind,
+) -> dict:
+    """Recheck a message-origin routine draft before automatic delivery."""
+    draft = connection.execute(
+        "SELECT d.*,m.tenant_id,m.property_id,m.message_type,m.content AS message_content "
+        "FROM draft d JOIN message m ON m.message_id=d.message_id "
+        "WHERE d.draft_id=? AND d.message_id=?",
+        (payload.get("draft_id"), row["message_id"]),
+    ).fetchone()
+    if draft is None:
+        raise PermanentDeliveryError("communication draft source could not be verified")
+    if (
+        draft["status"] != "auto_eligible"
+        or draft["version"] != int(payload.get("draft_version", -1))
+        or draft["content"] != payload.get("content")
+        or draft["property_id"] != payload.get("property_id")
+        or draft["tenant_id"] != row["recipient_id"]
+        or row["message_id"] != draft["message_id"]
+    ):
+        raise PermanentDeliveryError("communication draft is not an eligible version")
+    if kind is NotificationKind.LEASE_RENT_REPLY and draft["message_type"] != "lease_rent":
+        raise PermanentDeliveryError("communication notification kind conflicts with source")
+    if kind is NotificationKind.OTHER and draft["message_type"] == "lease_rent":
+        raise PermanentDeliveryError("communication notification kind conflicts with source")
+    emergency = connection.execute(
+        "SELECT 1 FROM audit WHERE subject_type='message' AND subject_id=? "
+        "AND action='communication.emergency_alert_attempted' LIMIT 1",
+        (row["message_id"],),
+    ).fetchone()
+    if emergency is not None:
+        raise PermanentDeliveryError("emergency communication requires review")
+
+    # Reuse the policy's decision vocabulary rather than trusting a payload
+    # flag. Import lazily to avoid a communication<->notification import cycle.
+    from communication.policy import is_decision_request
+
+    if is_decision_request(draft["message_content"]):
+        raise PermanentDeliveryError("decision communication requires review")
+    if draft["message_type"] == "unknown":
+        raise PermanentDeliveryError("unknown communication requires review")
+
+    try:
+        references = json.loads(draft["source_facts"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        raise PermanentDeliveryError("communication source facts are invalid") from None
+    if not isinstance(references, list):
+        raise PermanentDeliveryError("communication source facts are invalid")
+    if draft["message_type"] == "maintenance":
+        if not references or not _maintenance_reference_exists(
+            connection, draft["request_id"], draft["tenant_id"], draft["property_id"]
+        ):
+            raise PermanentDeliveryError("maintenance source facts are unavailable")
+    elif draft["message_type"] == "lease_rent":
+        if not references or not all(
+            isinstance(reference, dict) and
+            _lease_rent_reference_exists(
+                connection,
+                reference.get("source_type"),
+                reference.get("source_id"),
+                draft["tenant_id"],
+                draft["property_id"],
+            )
+            for reference in references
+        ):
+            raise PermanentDeliveryError("lease/rent source facts are unavailable")
+    return payload
+
+
+def _maintenance_reference_exists(
+    connection: sqlite3.Connection, request_id: str | None, tenant_id: str, property_id: str
+) -> bool:
+    if not request_id:
+        return False
+    return bool(
+        connection.execute(
+            "SELECT 1 FROM mc_request WHERE id=? AND tenant_id=? AND property_id=?",
+            (request_id, tenant_id, property_id),
+        ).fetchone()
+        or connection.execute(
+            "SELECT 1 FROM maintenance_request WHERE request_id=? AND tenant_id=? "
+            "AND property_id=?",
+            (request_id, tenant_id, property_id),
+        ).fetchone()
+    )
+
+
+def _lease_rent_reference_exists(
+    connection: sqlite3.Connection,
+    source_type: str | None,
+    source_id: str | None,
+    tenant_id: str,
+    property_id: str,
+) -> bool:
+    if source_type == "rent_record":
+        return connection.execute(
+            "SELECT 1 FROM rent_record r JOIN lease l ON l.lease_id=r.lease_id "
+            "WHERE r.rent_record_id=? AND l.tenant_id=? AND l.property_id=? "
+            "AND r.property_id=?",
+            (source_id, tenant_id, property_id, property_id),
+        ).fetchone() is not None
+    if source_type == "lease":
+        return connection.execute(
+            "SELECT 1 FROM lease WHERE lease_id=? AND tenant_id=? AND property_id=?",
+            (source_id, tenant_id, property_id),
+        ).fetchone() is not None
+    return False
 
 
 def _result(row: sqlite3.Row) -> DeliveryResult:

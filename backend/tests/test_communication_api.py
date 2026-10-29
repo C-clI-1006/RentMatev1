@@ -105,3 +105,64 @@ def test_http_communication_uses_server_scope_and_real_module_adapters(
         assert legacy_count == 0
     finally:
         app.state.evidence_service._repo.close()
+
+
+def test_http_routine_communication_is_queued_then_dispatched_once(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "communication-dispatch.db"
+    connection = init_connection(database)
+    timestamp = "2026-10-29T00:00:00Z"
+    connection.execute(
+        "INSERT INTO tenant (tenant_id,name,created_at) VALUES ('tenant-1','T',?)",
+        (timestamp,),
+    )
+    connection.execute(
+        "INSERT INTO property (property_id,name,created_at) VALUES ('property-1','P',?)",
+        (timestamp,),
+    )
+    connection.execute(
+        "INSERT INTO tenant_property (tenant_id,property_id,role,created_at) "
+        "VALUES ('tenant-1','property-1','resident',?)",
+        (timestamp,),
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv(
+        "RENTMATE_AUTH_TOKENS",
+        json.dumps({"tenant-token": {"tenant_id": "tenant-1", "property_id": "property-1"}}),
+    )
+    monkeypatch.setenv("RENTMATE_SCHEDULER_TOKEN", "scheduler-token")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    app = create_app(db_path=str(database), storage_root=str(tmp_path / "evidence"))
+    try:
+        with TestClient(app) as client:
+            submitted = client.post(
+                "/api/communication/messages",
+                headers={"Authorization": "Bearer tenant-token"},
+                json={"content": "hello"},
+            )
+            assert submitted.status_code == 200
+            assert submitted.json()["reply_status"] == "auto_eligible"
+            assert submitted.json()["delivery_status"] == "not_dispatched"
+            first = client.post(
+                "/api/ops/notifications/dispatch",
+                headers={"Authorization": "Bearer scheduler-token"},
+            )
+            second = client.post(
+                "/api/ops/notifications/dispatch",
+                headers={"Authorization": "Bearer scheduler-token"},
+            )
+            inbox = client.get(
+                "/api/notifications/inbox",
+                headers={"Authorization": "Bearer tenant-token"},
+            )
+        assert first.status_code == 200
+        assert first.json()["delivered"] == 1
+        assert second.status_code == 200
+        assert second.json()["processed"] == 0
+        assert len(inbox.json()) == 1
+    finally:
+        app.state.evidence_service._repo.close()

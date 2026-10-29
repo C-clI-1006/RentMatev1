@@ -16,7 +16,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+import json
+import os
 import re
+
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Category(str, Enum):
@@ -91,3 +96,85 @@ class KeywordClassifier(BaseClassifier):
         """Match whole words without pretending this heuristic is an LLM."""
 
         return bool(re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", text))
+
+
+class _QwenClassification(BaseModel):
+    """Strict, task-local response contract for Communication."""
+
+    model_config = ConfigDict(extra="forbid")
+    category: Category
+    confidence: float = Field(ge=0, le=1)
+    note: str | None = Field(default=None, max_length=240)
+
+
+class QwenClassifier(BaseClassifier):
+    """Campus Qwen adapter for Communication intent classification.
+
+    This adapter classifies only into the application's existing categories.
+    It cannot determine identity, property scope, approval, emergency status,
+    or delivery. Any unavailable, uncertain, malformed, or unsupported model
+    output returns ``None`` so the service's existing human-handoff path wins.
+    """
+
+    def __init__(self, *, base_url: str | None = None, api_key: str | None = None,
+                 model: str | None = None):
+        self._base_url = (base_url or os.getenv("LLM_BASE_URL", "")).strip()
+        self._api_key = (api_key or os.getenv("LLM_API_KEY", "")).strip()
+        self._model = (model or os.getenv("LLM_MODEL", "")).strip()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._base_url and self._api_key and self._model)
+
+    def classify(self, content: str) -> Classification | None:
+        if not self.configured:
+            return None
+        try:
+            with httpx.Client(
+                timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+                trust_env=False,
+            ) as client:
+                response = client.post(
+                    self._base_url.rstrip("/") + "/chat/completions",
+                    headers={"Authorization": "Bearer " + self._api_key},
+                    json={
+                        "model": self._model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Classify one tenant property-management message. "
+                                    "Return only JSON with category, confidence and optional note. "
+                                    "Allowed category values are maintenance, lease_rent, "
+                                    "smalltalk, and unknown. Map complaints or general enquiries "
+                                    "to maintenance/lease_rent only when their intent is clear; "
+                                    "otherwise use unknown. Do not decide identity, property "
+                                    "ownership, emergency status, approval, or delivery."
+                                ),
+                            },
+                            {"role": "user", "content": content},
+                        ],
+                        "temperature": 0,
+                        "max_completion_tokens": 160,
+                        "reasoning_effort": "none",
+                        "stream": False,
+                    },
+                )
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            if not isinstance(raw, str) or not raw.strip():
+                return None
+            parsed = _QwenClassification.model_validate(json.loads(raw.strip()))
+            if parsed.confidence < 0.6:
+                return None
+            return Classification(parsed.category, parsed.confidence, parsed.note or "qwen")
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+            # Never expose raw model responses, credentials, or tenant content.
+            return None
+
+
+def build_communication_classifier() -> BaseClassifier:
+    """Use Campus Qwen only when fully configured; otherwise use safe mode."""
+
+    candidate = QwenClassifier()
+    return candidate if candidate.configured else KeywordClassifier()

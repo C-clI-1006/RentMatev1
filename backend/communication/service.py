@@ -409,6 +409,8 @@ class CommunicationService:
         )
         self._conn.commit()
         self._audit("draft.created", message_id, {"draft_id": draft.draft_id, "reason": reason})
+        if decision.status is DraftStatus.AUTO_ELIGIBLE:
+            self._queue_auto_reply(draft, auth_tenant_id=self._message_tenant(message_id))
         review = None
         if decision.status is DraftStatus.PENDING_REVIEW:
             review = ReviewRequest(
@@ -419,6 +421,59 @@ class CommunicationService:
                 source_facts=fact_refs or [],
             )
         return draft, review
+
+    def _message_tenant(self, message_id: MessageId) -> str | None:
+        row = self._conn.execute(
+            "SELECT tenant_id FROM message WHERE message_id=?", (message_id,)
+        ).fetchone()
+        return row["tenant_id"] if row else None
+
+    def _queue_auto_reply(self, draft: Draft, *, auth_tenant_id: str | None) -> None:
+        """Queue only the exact persisted routine version for dispatch.
+
+        The dispatcher independently rechecks the draft status, source,
+        emergency audit, policy triggers and property binding before delivery.
+        This producer only creates the durable accepted event; it never claims
+        that the tenant has received the reply.
+        """
+        if self._notification is None or auth_tenant_id is None:
+            return
+        row = self._conn.execute(
+            "SELECT property_id,message_type FROM message WHERE message_id=?",
+            (draft.message_id,),
+        ).fetchone()
+        if row is None:
+            return
+        kind = (
+            NotificationKind.LEASE_RENT_REPLY
+            if row["message_type"] == Category.LEASE_RENT.value
+            else NotificationKind.OTHER
+        )
+        try:
+            self._notification.publish(
+                NotificationEvent(
+                    event_id=reply_event_id(draft.message_id),
+                    recipient_id=RecipientId(auth_tenant_id),
+                    kind=kind,
+                    request_id=draft.request_id,
+                    message_id=draft.message_id,
+                    payload={
+                        "property_id": row["property_id"],
+                        "draft_id": draft.draft_id,
+                        "draft_version": draft.version,
+                        "content": draft.content,
+                    },
+                    created_at=draft.created_at,
+                )
+            )
+        except Exception:
+            # Queue failure is not a successful delivery and must not leak
+            # provider/credential details into a tenant-facing response.
+            self._audit(
+                "communication.auto_reply_queue_failed",
+                draft.message_id,
+                {"draft_id": draft.draft_id},
+            )
 
     def _message_content(self, message_id: str) -> str | None:
         row = self._conn.execute(

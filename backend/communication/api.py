@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from lease_rent import LeaseRentQueryService, SQLiteLeaseRentRepository
 from llm.live import LlmPriorityAssessor
+from llm.classifier import build_communication_classifier
 from maintenance.service import MaintenanceService
 from maintenance.store import Store
 from notification.service import SQLiteNotificationService
@@ -111,6 +112,7 @@ def get_service(
         maintenance,
         lease_rent,
         notification,
+        classifier=build_communication_classifier(),
     )
 
 
