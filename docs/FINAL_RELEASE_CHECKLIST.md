@@ -21,7 +21,10 @@
 - [ ] Rejected drafts create no notification.
 - [ ] Cross-property tenant and manager attempts are denied.
 - [ ] Evidence receipt, idempotent replay and conflicting replay are verified.
-- [ ] Monthly report scheduled and manager-triggered paths are verified.
+- [ ] Monthly report scheduled and manager-triggered paths are verified. The
+      Windows task can be registered with `Register-Monthly-Reports.ps1`; attach
+      `.runtime/monthly-report-runs.jsonl` from the acceptance machine before
+      marking this item complete.
 
 ## Jira and contribution evidence
 

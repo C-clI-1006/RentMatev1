@@ -79,6 +79,50 @@ deletes calculated data.
 The endpoint generates and returns a report; dashboard presentation and
 external delivery remain separate work.
 
+## Automatic monthly execution on Windows
+
+The repository includes a Windows Task Scheduler runner. It runs on the first
+day of each month and generates the previous completed calendar month for every
+row in `property`. It calls the same `ReportService` and scheduled trigger used
+by the HTTP endpoint; the stable event ID makes retries idempotent.
+
+Run `Start-RentMate.cmd` once to create the local runtime, then register the
+task from PowerShell:
+
+```powershell
+.\Register-Monthly-Reports.ps1
+```
+
+The default schedule is day 1 at 02:00. To choose another time:
+
+```powershell
+.\Register-Monthly-Reports.ps1 -StartTime '03:30'
+```
+
+The school/demo launcher uses `.runtime\rentmate-demo.db`. A deployed service
+must register the task with the same persistent database used by the backend:
+
+```powershell
+.\Register-Monthly-Reports.ps1 `
+  -DatabasePath 'D:\RentMate\rentmate.db' `
+  -LogPath 'D:\RentMate\logs\monthly-report-runs.jsonl'
+```
+
+For an immediate acceptance run (an explicit period is optional):
+
+```powershell
+.\Run-Monthly-Reports.ps1 -Year 2026 -Month 9
+```
+
+Each run appends one credential-free JSON record to
+`.runtime\monthly-report-runs.jsonl`. The record contains timestamps, period,
+per-property outcome and whether an existing idempotent result was reused. A
+failure for one property does not stop the remaining properties, but makes the
+process exit non-zero so Task Scheduler records a failed run. The machine must
+be powered on and the configured user must be logged on under the default
+school/demo registration; a production deployment should register the same
+runner under its service account and use its persistent database path.
+
 ## Manager entrypoints
 
 All three use the manager session token (`Bearer <manager session token
