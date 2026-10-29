@@ -24,6 +24,7 @@ from contracts.reporting import (  # noqa: E402
     ReportGenerated,
     ReportGenerationError,
     ReportPeriod,
+    REPORTING_TIMEZONE,
     ScheduledReportTrigger,
 )
 from lease_rent.reporting import SQLiteLeaseRentReportSource  # noqa: E402
@@ -35,7 +36,7 @@ from reporting.repository import ReportRepository  # noqa: E402
 from reporting.service import ReportService  # noqa: E402
 from shared.sqlite import init_connection  # noqa: E402
 
-BUSINESS_TIMEZONE = "Australia/Sydney"
+BUSINESS_TIMEZONE = REPORTING_TIMEZONE
 
 
 def scheduled_period(now: datetime | None = None) -> ReportPeriod:

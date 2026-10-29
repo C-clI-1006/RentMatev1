@@ -10,13 +10,27 @@ const navigation = {
 };
 const descriptions = {home:'Your property, with the important details in view.',messages:'Conversations, clear next steps and truthful reply status.',maintenance:'From first report to resolution, with a recorded history.',documents:'Original files, classification outcomes and human review.',notifications:'Replies delivered to your local tenant inbox.',lease:'Overdue rent and lease deadlines, through the reminder workflow.',reviews:'Your decision, on the exact version in front of you.',reports:'Structured property data and a separate narrative, month by month.',activity:'Persisted events for one selected maintenance request.',guided:'Four connected journeys. You choose every next action.'};
 const badge = status => '<span class="badge '+(['delivered','approved','closed','accepted','complete','classified','saved'].includes(status)?'good':['failed','rejected','reject','cancelled'].includes(status)?'bad':['pending_review','under_review','partial_success','pending_retry','missing'].includes(status)?'warn':'')+'">'+esc(status ?? 'unavailable')+'</span>';
-const date = value => value ? new Date(value).toLocaleString() : 'Unavailable';
+const date = value => value ? new Date(value).toLocaleString('en-AU',{timeZone:'Australia/Sydney'}) : 'Unavailable';
 const technical = data => '<details><summary>View technical details</summary><pre>'+esc(JSON.stringify(data,null,2))+'</pre></details>';
 const empty = message => '<div class="empty">'+esc(message)+'</div>';
 const notice = message => '<div class="notice">'+esc(message)+'</div>';
 const button = (label, action, id='', secondary=true) => '<button class="'+(secondary?'secondary ':'')+'small" data-action="'+action+'" data-id="'+esc(id)+'">'+esc(label)+'</button>';
-const request = (path, options={}) => api(path,{token:state.token,...options});
-const ops = (path) => api(path,{token:state.scheduler,method:'POST'});
+const captureContext = () => ({epoch:state.epoch,token:state.token,property:state.property,role:state.role,scheduler:state.scheduler});
+const isCurrent = context => Object.keys(context).every(key=>state[key]===context[key]);
+class StaleContextError extends Error { constructor() { super('Obsolete workspace response'); this.stale=true; } }
+function requireCurrent(context) { if(!isCurrent(context)) throw new StaleContextError(); }
+async function contextualApi(path, options, context=captureContext()) {
+  requireCurrent(context);
+  try { const value=await api(path,options); requireCurrent(context); return value; }
+  catch(error) { requireCurrent(context); throw error; }
+}
+const request = (path, options={}) => { const context=captureContext(); return contextualApi(path,{token:context.token,...options},context); };
+const ops = (path) => { const context=captureContext(); return contextualApi(path,{token:context.scheduler,method:'POST'},context); };
+async function refreshCurrent(page, context) {
+  requireCurrent(context);
+  const pending=render(page); const next=captureContext();
+  await pending; requireCurrent(next); return next;
+}
 const propQuery = () => 'property_id='+enc(state.property);
 const refs = value => value.split(',').map(s=>s.trim()).filter(Boolean);
 function errorMessage(error) {
@@ -26,8 +40,9 @@ function errorMessage(error) {
 function flash(message,error=false) { $('feedback').innerHTML='<div class="notice '+(error?'error':'')+'">'+esc(message)+'</div>'; }
 async function busy(control, work) {
   if(control.disabled) return;
+  const context=captureContext();
   control.disabled=true; const original=control.textContent; control.textContent='Working…';
-  try { await work(); } catch(error) { flash(errorMessage(error),true); }
+  try { await work(); } catch(error) { if(!error.stale && isCurrent(context)) flash(errorMessage(error),true); }
   finally { control.disabled=false; control.textContent=original; }
 }
 function nav() {
@@ -122,7 +137,7 @@ async function lease() {
   const q=await request('/api/reviews'); const reminders=q.filter(r=>['rent_reminder','lease_deadline'].includes(r.draft.source_kind));
   return notice('General lease and rent ledger APIs are not exposed. This view uses persisted reminder drafts from the authorized scheduled scan. It does not calculate balances or deadlines in the browser.')+operations('scan')+'<section class="card"><h2>Reminder drafts awaiting review</h2><p class="muted">Open Review Centre to approve or reject. Delivery remains a separate action.</p>'+button('Open Review Centre','navigate','reviews')+'</section>'+reviewCards(reminders)+operations('dispatch');
 }
-function reportPeriod() { const now=new Date(); return {year:now.getFullYear(),month:now.getMonth()+1}; }
+function reportPeriod() { const parts=new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Sydney',year:'numeric',month:'numeric'}).formatToParts(new Date()); return {year:Number(parts.find(p=>p.type==='year').value),month:Number(parts.find(p=>p.type==='month').value)}; }
 async function reports() {
   const p=state.period || reportPeriod(); state.period=p;
   const history=await request('/api/manager/monthly-reports?'+propQuery()+'&year='+p.year+'&month='+p.month);
@@ -138,14 +153,21 @@ async function reportDetail(id) {
   const r=await request('/api/manager/monthly-reports/'+enc(id)+'?'+propQuery()); state.selectedReport=r;
   $('content').innerHTML=button('← Report history','navigate','reports')+'<section class="card"><div class="card-head"><h2>Property report · '+r.period.year+'-'+String(r.period.month).padStart(2,'0')+'</h2>'+badge(r.outcome)+'</div><p class="muted">Generation '+r.generation+' · Data read '+esc(date(r.data_as_of))+'</p><div class="report-sections">'+['maintenance','rent','lease','open_tasks','risks'].map(k=>'<article class="report-section"><h3>'+esc(k.replaceAll('_',' ').toUpperCase())+'</h3>'+structured(r[k])+'</article>').join('')+'</div></section><section class="card"><h2>Narrative</h2>'+badge(r.narrative.source)+'<p>'+esc(r.narrative.text || 'No narrative was generated. The structured report is preserved above.')+'</p><p class="hint">Source is the persisted backend narrative.source value. Structured data above is collected independently.</p>'+technical(r)+'</section>';
   $('pageTitle').textContent='Monthly report';
+  if(r.narrative.source==='missing') {
+    const diagnostic=document.createElement('div'); diagnostic.className='notice';
+    diagnostic.textContent='Narrative unavailable: '+(r.narrative.failure_code || 'failure_not_recorded')+'. Check AI settings, then use New generation to retry. Reusing an existing report does not call the model again.';
+    $('content').append(diagnostic);
+  }
 }
 async function activity() {
   const items=await request('/api/maintenance/requests');
   return '<section class="card"><h2>Follow a maintenance workflow</h2><p class="muted">Select a request to inspect its persisted Maintenance events and Evidence handoff timeline. No global event feed is available.</p><form id="timelineForm"><label>Maintenance request<select name="request_id" required>'+items.map(v=>'<option value="'+esc(v.request_id)+'">'+esc(v.title)+' · '+esc(v.status)+'</option>').join('')+'</select></label><button '+(!items.length?'disabled':'')+'>Open timeline</button></form></section><div id="timelineContent"></div>';
 }
 async function timeline(id) {
+  const context=captureContext();
   const v=await request('/api/maintenance/requests/'+enc(id)); state.selectedRequest=v;
   const result=await Promise.allSettled([request('/api/evidence/maintenance-timeline?request_id='+enc(id)+'&'+propQuery())]);
+  requireCurrent(context);
   const evidence=result[0].status==='fulfilled'?'<h3>Evidence · persisted handoff records</h3>'+structured(result[0].value)+technical(result[0].value):notice('Evidence timeline unavailable: '+errorMessage(result[0].reason));
   const html='<section class="card"><h2>'+esc(v.title)+'</h2><p><code>'+esc(id)+'</code></p><h3>Maintenance · request event history</h3>'+events(v.events)+evidence+technical({request_id:v.request_id,message_id:v.message_id})+'</section>';
   if($('timelineContent')) $('timelineContent').innerHTML=html; else $('content').innerHTML=html;
@@ -161,41 +183,46 @@ function openSession() {
   const f=$('sessionForm'); f.elements.role.value=state.role; f.elements.property.value=state.property; f.elements.token.value=state.token; f.elements.scheduler.value=state.scheduler; $('sessionDialog').showModal();
 }
 const modelResult=(message,error=false)=>$('modelSettingsResult').innerHTML='<div class="notice '+(error?'error':'')+'">'+esc(message)+'</div>';
+let modelEpoch=0;
 function showModelStatus(result) {
   const f=$('modelSettingsForm'); f.elements.base_url.value=result.base_url; f.elements.model.value=result.model;
   modelResult('Configuration '+(result.configured?'ready':'incomplete')+' · API key '+(result.api_key_configured?'configured':'not configured')+' · Source: '+result.source+'. Live inference has not been tested by this status read.');
 }
 async function modelAction(control, action) {
   const f=$('modelSettingsForm'); if(f.dataset.busy==='true') return;
+  const context=captureContext(); const epoch=modelEpoch;
   const controls=Array.from(f.querySelectorAll('button')); controls.forEach(b=>b.disabled=true); f.dataset.busy='true';
   try {
     const token=f.elements.operator_token.value.trim();
-    if(action==='load') showModelStatus(await api('/api/ops/llm/settings',{token}));
+    const call=async(path,options={})=>{const value=await contextualApi(path,{token,...options},context); if(epoch!==modelEpoch) throw new StaleContextError(); return value;};
+    if(action==='load') showModelStatus(await call('/api/ops/llm/settings'));
     if(action==='save') {
-      const result=await api('/api/ops/llm/settings',{token,method:'PUT',body:{base_url:f.elements.base_url.value.trim(),model:f.elements.model.value.trim(),api_key:f.elements.api_key.value || null}});
+      const result=await call('/api/ops/llm/settings',{method:'PUT',body:{base_url:f.elements.base_url.value.trim(),model:f.elements.model.value.trim(),api_key:f.elements.api_key.value || null}});
       showModelStatus(result); modelResult('Settings applied to this server process. Connection not tested. Use Test model connection to make a real API call.');
     }
     if(action==='test') {
       modelResult('Calling the configured model. This may take up to the server timeout…');
-      const result=await api('/api/ops/llm/test',{token,method:'POST'});
+      const result=await call('/api/ops/llm/test',{method:'POST'});
       modelResult('Real model returned a validated response. Source: '+result.source+' · Classification: '+result.category+'. This verifies the connection, not every domain workflow.');
     }
     if(action==='restore') {
       if(!confirm('Restore the running server’s startup environment settings?')) return;
-      showModelStatus(await api('/api/ops/llm/settings',{token,method:'DELETE'}));
+      showModelStatus(await call('/api/ops/llm/settings',{method:'DELETE'}));
     }
-  } catch(error) { modelResult(errorMessage(error),true); }
-  finally { f.elements.api_key.value=''; f.dataset.busy='false'; controls.forEach(b=>b.disabled=false); }
+  } catch(error) { if(!error.stale && isCurrent(context) && epoch===modelEpoch) modelResult(errorMessage(error),true); }
+  finally { if(epoch===modelEpoch) { f.elements.api_key.value=''; f.dataset.busy='false'; controls.forEach(b=>b.disabled=false); } }
 }
 $('modelSettingsButton').onclick=()=>{
+  modelEpoch++;
   const f=$('modelSettingsForm'); f.elements.operator_token.value=state.scheduler; f.elements.api_key.value='';
+  f.dataset.busy='false'; f.querySelectorAll('button').forEach(b=>b.disabled=false);
   modelResult('Enter the local operations token and load current settings, or enter your API address, key and model.'); $('modelSettingsDialog').showModal();
 };
 $('loadModelSettings').onclick=e=>modelAction(e.currentTarget,'load');
 $('testModelSettings').onclick=e=>modelAction(e.currentTarget,'test');
 $('restoreModelSettings').onclick=e=>modelAction(e.currentTarget,'restore');
 $('closeModelSettings').onclick=()=>{ $('modelSettingsForm').reset(); $('modelSettingsDialog').close(); };
-$('modelSettingsDialog').addEventListener('close',()=>{ $('modelSettingsForm').elements.api_key.value=''; $('modelSettingsForm').elements.operator_token.value=''; });
+$('modelSettingsDialog').addEventListener('close',()=>{ modelEpoch++; const f=$('modelSettingsForm'); f.elements.api_key.value=''; f.elements.operator_token.value=''; f.dataset.busy='false'; f.querySelectorAll('button').forEach(b=>b.disabled=false); });
 $('modelSettingsForm').onsubmit=e=>{ e.preventDefault(); modelAction(e.submitter,'save'); };
 $('sessionButton').onclick=openSession; $('cancelSession').onclick=()=>$('sessionDialog').close(); $('refreshButton').onclick=()=>render();
 $('sessionForm').onsubmit=e=>{
@@ -208,7 +235,11 @@ document.addEventListener('click', async e=>{
   const b=e.target.closest('[data-action]'); if(!b) return; const {action,id}=b.dataset;
   if(action==='session') return openSession();
   if(action==='navigate') return render(id);
+  // Every new detail action invalidates earlier pending detail responses,
+  // including two clicks in the same identity and property context.
+  if(['request','document','report','timeline'].includes(action)) state.epoch++;
   await busy(b,async()=>{
+    let context=captureContext();
     if(action==='request') await requestDetail(id);
     if(action==='document') await documentDetail(id);
     if(action==='report') await reportDetail(id);
@@ -220,7 +251,7 @@ document.addEventListener('click', async e=>{
     if(['scan','handoff','dispatch'].includes(action)) {
       if(!confirm('Run this local operations action using the separate scheduler credential?')) return;
       const paths={scan:'/api/ops/rent-alerts/run',handoff:'/api/ops/communication/maintenance-events/run',dispatch:'/api/ops/notifications/dispatch'};
-      const data=await ops(paths[action]); state.operations.unshift({name:action,result:data}); state.operations=state.operations.slice(0,5); await render(); flash(action+' completed. Actual result: '+JSON.stringify(data));
+      const data=await ops(paths[action]); state.operations.unshift({name:action,result:data}); state.operations=state.operations.slice(0,5); context=await refreshCurrent(state.page,context); flash(action+' completed. Actual result: '+JSON.stringify(data));
     }
   });
 });
@@ -229,10 +260,11 @@ document.addEventListener('submit',async e=>{
   if(!['messageForm','maintenanceForm','uploadForm','statusForm','assessmentForm','evidenceReviewForm','reportForm','timelineForm'].includes(f.id) && !f.classList.contains('reviewForm')) return;
   e.preventDefault(); const submitter=e.submitter || f.querySelector('button'); if(f.dataset.busy==='true') return;
   const data=Object.fromEntries(new FormData(f)); const selectedDecision=e.submitter?.value;
+  let context=captureContext();
   f.dataset.busy='true'; const controls=Array.from(f.querySelectorAll('button')); controls.forEach(b=>b.disabled=true);
   try {
     if(f.id==='messageForm') {
-      const r=await request('/api/communication/messages',{method:'POST',body:{content:data.content}}); state.receipts.unshift({...r,content:data.content}); f.reset(); await render('messages'); flash('Message recorded. Reply: '+r.reply_status+' · Delivery: '+r.delivery_status+'.');
+      const r=await request('/api/communication/messages',{method:'POST',body:{content:data.content}}); state.receipts.unshift({...r,content:data.content}); f.reset(); context=await refreshCurrent('messages',context); flash('Message recorded. Reply: '+r.reply_status+' · Delivery: '+r.delivery_status+'.');
     }
     if(f.id==='maintenanceForm') {
       f.dataset.key ||= crypto.randomUUID(); const r=await request('/api/maintenance/requests',{method:'POST',headers:{'Idempotency-Key':f.dataset.key},body:{title:data.title,description:data.description,location:data.location || null,evidence_refs:refs(data.evidence_refs)}});
@@ -255,7 +287,7 @@ document.addEventListener('submit',async e=>{
     if(f.classList.contains('reviewForm')) {
       if(selectedDecision==='rejected' && !data.reason.trim()) throw new Error('Enter a reason to reject this reply.');
       if(!confirm((selectedDecision==='approved'?'Approve':'Reject')+' this exact draft version?')) return;
-      const r=await request('/api/reviews/'+enc(f.dataset.id)+'/decision',{method:'POST',body:{expected_version:Number(f.dataset.version),decision:selectedDecision,final_content:selectedDecision==='approved'?data.final_content:null,reason:data.reason || null}}); state.decisions.unshift(r); await render(); flash('Decision recorded: '+selectedDecision+'. Approval queues a reply; delivery is separate.');
+      const r=await request('/api/reviews/'+enc(f.dataset.id)+'/decision',{method:'POST',body:{expected_version:Number(f.dataset.version),decision:selectedDecision,final_content:selectedDecision==='approved'?data.final_content:null,reason:data.reason || null}}); state.decisions.unshift(r); context=await refreshCurrent(state.page,context); flash('Decision recorded: '+selectedDecision+'. Approval queues a reply; delivery is separate.');
     }
     if(f.id==='reportForm') {
       const [year,month]=data.period.split('-').map(Number); state.period={year,month};
@@ -267,7 +299,7 @@ document.addEventListener('submit',async e=>{
       const record=r.report || r; await reportDetail(record.report_id); flash(r.reused?'Existing generation reused.':'Report generation saved.');
     }
     if(f.id==='timelineForm') await timeline(data.request_id);
-  } catch(error) { flash(errorMessage(error),true); }
+  } catch(error) { if(!error.stale && isCurrent(context)) flash(errorMessage(error),true); }
   finally { f.dataset.busy='false'; controls.forEach(b=>b.disabled=false); }
 });
 render();

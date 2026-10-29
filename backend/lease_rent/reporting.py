@@ -11,8 +11,9 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from contracts.common import PropertyId
 from contracts.reporting import (
@@ -25,6 +26,7 @@ from contracts.reporting import (
     ReportPeriod,
     SectionAvailability,
     SourceReference,
+    REPORTING_TIMEZONE,
 )
 
 from .models import RentRecordInput
@@ -37,8 +39,8 @@ _RENT_UNAVAILABLE_NOTE = "rent data is temporarily unavailable"
 _LEASE_UNAVAILABLE_NOTE = "lease data is temporarily unavailable"
 
 
-def _utc_today() -> date:
-    return datetime.now(timezone.utc).date()
+def _business_today() -> date:
+    return datetime.now(ZoneInfo(REPORTING_TIMEZONE)).date()
 
 
 class SQLiteLeaseRentReportSource(ILeaseRentReportSource):
@@ -55,7 +57,7 @@ class SQLiteLeaseRentReportSource(ILeaseRentReportSource):
         connection: sqlite3.Connection,
         *,
         reminder_window_days: int = 30,
-        today: Callable[[], date] = _utc_today,
+        today: Callable[[], date] = _business_today,
     ) -> None:
         if reminder_window_days < 0:
             raise ValueError("reminder_window_days cannot be negative")
@@ -145,8 +147,8 @@ class SQLiteLeaseRentReportSource(ILeaseRentReportSource):
                 "ORDER BY lease_id",
                 (
                     property_id,
-                    period.end.date().isoformat(),
-                    period.start.date().isoformat(),
+                    period.end_date.isoformat(),
+                    period.start_date.isoformat(),
                 ),
             )
             if not rows:

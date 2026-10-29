@@ -132,8 +132,9 @@ Real Task Scheduler execution has not been verified on this macOS development
 machine. See `docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md` for the Windows
 acceptance procedure and required evidence. Browser AI settings affect only
 the running web server; the separate monthly process uses its environment or
-`backend/.env`. The existing source-data interval contract remains unchanged;
-the timezone correction here selects the scheduler's intended calendar month.
+`backend/.env`. Scheduled month selection and timestamp-based source intervals
+both use Sydney calendar boundaries, converted to UTC for timestamp comparisons.
+Date-only lease records use the corresponding Sydney calendar dates.
 
 ## Manager entrypoints
 

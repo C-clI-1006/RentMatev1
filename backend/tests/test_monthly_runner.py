@@ -67,6 +67,19 @@ def test_scheduler_rejects_naive_clock():
         scheduled_period(datetime(2026, 10, 1, 2))
 
 
+@pytest.mark.parametrize("year,month,start,end", [
+    (2026, 10, "2026-09-30T14:00:00+00:00", "2026-10-31T13:00:00+00:00"),
+    (2026, 4, "2026-03-31T13:00:00+00:00", "2026-04-30T14:00:00+00:00"),
+    (2026, 12, "2026-11-30T13:00:00+00:00", "2026-12-31T13:00:00+00:00"),
+])
+def test_report_source_bounds_match_sydney_calendar_across_dst_and_year(year, month, start, end):
+    period = ReportPeriod(year=year, month=month)
+    assert period.start == datetime.fromisoformat(start)
+    assert period.end == datetime.fromisoformat(end)
+    assert period.start.astimezone(ZoneInfo("Australia/Sydney")).date() == period.start_date
+    assert period.end.astimezone(ZoneInfo("Australia/Sydney")).date() == period.end_date
+
+
 def test_cli_default_uses_sydney_not_host_calendar(monkeypatch, capsys, tmp_path):
     import reporting.monthly_runner as runner
 

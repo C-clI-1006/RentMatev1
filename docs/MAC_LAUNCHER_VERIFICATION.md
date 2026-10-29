@@ -52,7 +52,3 @@ configuration. Browser-only API settings do not transfer to this process.
 Fresh dependency download and Finder double-click were not independently
 tested; the actual Bash launcher/startup path was tested with the existing
 interpreter. Windows Task Scheduler remains unverified on this macOS host.
-
-The nine-page Chinese guide was generated with ReportLab using an embedded
-Chinese-capable font, text-extracted and visually checked after rendering all
-pages with Poppler. Its source and generator are checked in alongside the PDF.

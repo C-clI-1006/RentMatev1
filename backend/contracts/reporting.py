@@ -112,6 +112,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, NewType, Union
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -136,6 +137,7 @@ ReportId = NewType("ReportId", str)
 # identity "system:scheduler", the same vocabulary as
 # ReportRecord.created_by).
 CallerIdentity = NewType("CallerIdentity", str)
+REPORTING_TIMEZONE = "Australia/Sydney"
 
 
 class ReportPeriod(BaseModel):
@@ -150,16 +152,26 @@ class ReportPeriod(BaseModel):
         return f"{self.year:04d}-{self.month:02d}"
 
     @property
+    def start_date(self) -> date:
+        """Inclusive Sydney calendar date, for date-only lease records."""
+        return date(self.year, self.month, 1)
+
+    @property
+    def end_date(self) -> date:
+        """Exclusive Sydney calendar date, independent of UTC conversion."""
+        if self.month == 12:
+            return date(self.year + 1, 1, 1)
+        return date(self.year, self.month + 1, 1)
+
+    @property
     def start(self) -> datetime:
-        """Inclusive period start (UTC midnight of the first day)."""
-        return datetime(self.year, self.month, 1, tzinfo=timezone.utc)
+        """Sydney month start as a UTC instant (inclusive)."""
+        return datetime.combine(self.start_date, datetime.min.time(), ZoneInfo(REPORTING_TIMEZONE)).astimezone(timezone.utc)
 
     @property
     def end(self) -> datetime:
-        """Exclusive period end (UTC midnight of the next month)."""
-        if self.month == 12:
-            return datetime(self.year + 1, 1, 1, tzinfo=timezone.utc)
-        return datetime(self.year, self.month + 1, 1, tzinfo=timezone.utc)
+        """Next Sydney month start as a UTC instant (exclusive)."""
+        return datetime.combine(self.end_date, datetime.min.time(), ZoneInfo(REPORTING_TIMEZONE)).astimezone(timezone.utc)
 
 
 class ScheduledReportTrigger(BaseModel):
@@ -545,6 +557,10 @@ class ReportNarrative(BaseModel):
     source: NarrativeSource
     text: str | None = None  # None when source is MISSING
     generated_at: datetime | None = None
+    failure_code: Literal[
+        "not_configured", "configuration", "timeout", "unavailable", "http_rejected",
+        "empty_content", "truncated_output", "invalid_response", "invalid_output",
+    ] | None = None
 
     @model_validator(mode="after")
     def _check_text(self) -> "ReportNarrative":

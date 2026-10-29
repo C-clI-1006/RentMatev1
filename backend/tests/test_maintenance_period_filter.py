@@ -16,6 +16,7 @@ included with an explicit note instead of being silently dropped.
 
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from contracts.maintenance import (
     MaintenanceEvent,
@@ -32,7 +33,8 @@ PERIOD_DEC = ReportPeriod(year=2026, month=12)
 
 
 def ts(*args):
-    return datetime(*args, tzinfo=timezone.utc)
+    # The named calendar-boundary fixtures describe Sydney business dates.
+    return datetime(*args, tzinfo=ZoneInfo("Australia/Sydney")).astimezone(timezone.utc)
 
 
 def _event(eid, occurred, to_status, from_status=None, request_id="r"):
@@ -88,6 +90,21 @@ def _seed(tmp_path, views):
 
 def _ids(section):
     return {r.request_id for r in section.requests}
+
+
+def test_sydney_october_edges_include_october_and_exclude_november(tmp_path):
+    zone = ZoneInfo("Australia/Sydney")
+    views = []
+    for month, request_id in [(10, "sydney-october-edge"), (11, "sydney-november-edge")]:
+        created = datetime(2026, month, 1, 0, 30, tzinfo=zone).astimezone(timezone.utc)
+        closed = datetime(2026, month, 1, 1, 30, tzinfo=zone).astimezone(timezone.utc)
+        views.append(_view(request_id, created, MaintenanceStatus.CLOSED, events=(
+            _event(request_id + "-created", created, MaintenanceStatus.SUBMITTED, request_id=request_id),
+            _event(request_id + "-closed", closed, MaintenanceStatus.CLOSED,
+                   MaintenanceStatus.IN_PROGRESS, request_id),
+        )))
+    section = _seed(tmp_path, views).list_for_period("p1", ReportPeriod(year=2026, month=10))
+    assert _ids(section) == {"sydney-october-edge"}
 
 
 def test_created_next_month_is_excluded_even_if_still_open(tmp_path):

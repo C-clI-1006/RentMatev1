@@ -169,3 +169,61 @@ def test_timeout_returns_missing_without_leaking_secret(config, monkeypatch):
     result = _call(monkeypatch)
     assert result.source is NarrativeSource.MISSING
     assert result.text is None
+    assert result.failure_code == "timeout"
+    assert "test-only-key" not in result.model_dump_json()
+
+
+def test_fenced_json_is_validated_instead_of_discarding_real_summary(config, monkeypatch):
+    _respond(monkeypatch, '```json\n{"summary":"One routine repair."}\n```')
+    result = _call(monkeypatch)
+    assert result.source is NarrativeSource.LIVE
+    assert result.text == "One routine repair."
+    assert result.failure_code is None
+
+
+@pytest.mark.parametrize("first_choice", [
+    {"message": {"content": ""}, "finish_reason": "stop"},
+    {"message": {"content": '{"summary":"partial'}, "finish_reason": "length"},
+])
+def test_empty_or_truncated_response_retries_once_with_larger_budget(config, monkeypatch, first_choice):
+    budgets = []
+
+    def post(self, url, **kwargs):
+        budgets.append(kwargs["json"]["max_completion_tokens"])
+        choice = first_choice if len(budgets) == 1 else {"message": {"content": '{"summary":"Recovered real summary."}'}}
+        return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [choice]})
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    result = _call(monkeypatch)
+    assert result.source is NarrativeSource.LIVE
+    assert result.text == "Recovered real summary."
+    assert budgets == [800, 1600]
+
+
+def test_auth_rejection_is_not_retried_and_has_only_safe_diagnostic(config, monkeypatch):
+    calls = []
+
+    def post(self, url, **kwargs):
+        calls.append(url)
+        return httpx.Response(401, request=httpx.Request("POST", url), text="test-only-key")
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    result = _call(monkeypatch)
+    assert len(calls) == 1
+    assert result.failure_code == "http_rejected"
+    assert result.text is None
+    assert "test-only-key" not in result.model_dump_json()
+
+
+def test_whitespace_summary_is_not_claimed_as_live(config, monkeypatch):
+    _respond(monkeypatch, '{"summary":"   "}')
+    result = _call(monkeypatch)
+    assert result.source is NarrativeSource.MISSING
+    assert result.failure_code == "invalid_output"
+
+
+def test_unconfigured_failure_is_explicit(monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "")
+    result = _call(monkeypatch)
+    assert result.source is NarrativeSource.MISSING
+    assert result.failure_code == "not_configured"

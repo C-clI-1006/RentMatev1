@@ -28,9 +28,7 @@ preserved at `/demo`. Model address, key and model name can be entered using
 the protected local **AI settings** dialog. Browser configuration is held in
 the web server process only; separate monthly jobs use environment/`.env`.
 
-Team handoff: [Chinese end-to-end testing guide (PDF)](output/pdf/RentMate_全组全链路演示与测试说明_20261030.pdf),
-[editable Chinese source](docs/全组全链路演示与测试说明.md),
-[English demo guide](frontend/DEMO_GUIDE.md), and
+Team handoff: [English demo guide](frontend/DEMO_GUIDE.md) and
 [live model acceptance](docs/LIVE_MODEL_ACCEPTANCE.md).
 
 ## Stack
