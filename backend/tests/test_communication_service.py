@@ -598,12 +598,14 @@ def test_unverified_facts_never_autoeligible(db, condition):
     assert out.review is not None
 
 
-def test_autoeligible_is_not_approval_or_dispatch(db):
+def test_autoeligible_queues_exact_version_without_claiming_delivery(db):
     publisher = FakeNotification()
     out = make_service(db, notification=publisher).handle_message(AuthContext(TENANT, PROPERTY), "hello")
     assert out.draft.status is DraftStatus.AUTO_ELIGIBLE
     assert out.review is None
-    assert publisher.published == []
+    assert len(publisher.published) == 1
+    assert publisher.published[0].event_id == f"reply:{out.message_id}"
+    assert publisher.published[0].payload["draft_id"] == out.draft.draft_id
     assert out.tenant_response() == {"message_id": out.message_id, "reply_status": "auto_eligible", "delivery_status": "not_dispatched"}
 
 

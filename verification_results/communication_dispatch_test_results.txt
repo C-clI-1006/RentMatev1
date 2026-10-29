@@ -1,0 +1,36 @@
+Communication FR-COM-04 dispatch verification
+==============================================
+
+The confirmed defect was a missing producer-to-outbox step: Communication
+created `auto_eligible` drafts but did not publish a notification event.
+
+Regression tests:
+
+- `test_routine_communication_auto_dispatches_once_with_persisted_eligibility`
+  proves one `reply:<message_id>` event is created, delivery reaches the local
+  tenant inbox, and a second dispatch performs zero additional attempts.
+- `test_review_required_communication_never_queues_tenant_delivery` proves a
+  failed/unknown path does not create an event.
+- `test_review_required_maintenance_never_queues_tenant_delivery` proves an
+  emergency maintenance draft remains pending review and does not create a
+  tenant event.
+- `test_auto_dispatch_delivery_failure_is_persisted` proves permanent adapter
+  failure becomes persisted `failed` with one attempt and a delivery audit row.
+- `test_http_routine_communication_is_queued_then_dispatched_once` proves the
+  real FastAPI entry points queue, dispatch and deduplicate the routine reply.
+
+The dispatcher also checks exact draft version/content, current tenant and
+property authorization, emergency audit absence, decision-request absence,
+category, and persisted source references. It never accepts a client-provided
+`auto_eligible` flag as sufficient proof.
+
+The response returned immediately after submission remains:
+
+```json
+{"reply_status":"auto_eligible","delivery_status":"not_dispatched"}
+```
+
+This is intentional: an accepted outbox event is queued, not delivered. The
+dispatcher is the only component that records delivered, retryable or failed
+delivery states.
+

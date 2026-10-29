@@ -1,0 +1,36 @@
+Communication Qwen and fallback verification
+============================================
+
+Baseline from origin/main (before this branch):
+- Communication filter: 55 passed, 339 deselected, 1 warning.
+- Full backend suite: 394 passed, 1 warning.
+
+Commands after the implementation:
+
+PYTHONDONTWRITEBYTECODE=1 /tmp/rentmate-test-venv/bin/python -m pytest backend/tests -q -p no:cacheprovider -k communication
+Exit code: 0
+Result: 67 passed, 339 deselected, 1 warning.
+
+PYTHONDONTWRITEBYTECODE=1 /tmp/rentmate-test-venv/bin/python -m pytest backend/tests -q -p no:cacheprovider
+Exit code: 0
+Result: 406 passed, 1 warning.
+
+git diff --check
+Exit code: 0
+Result: clean.
+
+New Qwen adapter tests:
+- valid supported category -> validated Classification;
+- unsupported category / extra field / malformed JSON -> None;
+- low confidence -> None;
+- timeout -> None;
+- no configuration -> KeywordClassifier safe mode.
+
+All model HTTP tests use a local mocked response. No Campus Qwen call was made
+in this audit. Maintenance and Reporting adapters remain present and were not
+rewritten. Existing emergency detection remains deterministic and independent
+of classifier output, including explicit negation handling.
+
+The complete suite warning is the existing Starlette/httpx TestClient
+deprecation warning.
+
