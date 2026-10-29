@@ -350,6 +350,48 @@ class CommunicationService:
         )
         return delivery_label(result.status, result.detail)
 
+    def message_trace(self, auth: AuthContext, message_id: str) -> dict | None:
+        """Read persisted provenance within one verified tenant/property.
+
+        This is intentionally not a search for the newest request or draft:
+        both associations must carry this exact message_id.  Emergency state
+        comes from the audit written by the completed intake path rather than
+        re-running text detection during the read.
+        """
+        if not self._binding_verified(auth.tenant_id, auth.property_id):
+            raise PermissionError("tenant/property binding not verified")
+        message = self._conn.execute(
+            "SELECT message_type FROM message WHERE message_id=? "
+            "AND tenant_id=? AND property_id=?",
+            (message_id, auth.tenant_id, auth.property_id),
+        ).fetchone()
+        if message is None:
+            return None
+        request = self._conn.execute(
+            "SELECT id FROM mc_request WHERE message_id=? AND tenant_id=? "
+            "AND property_id=?",
+            (message_id, auth.tenant_id, auth.property_id),
+        ).fetchone()
+        drafts = self._conn.execute(
+            "SELECT draft_id FROM draft WHERE message_id=? ORDER BY created_at,draft_id",
+            (message_id,),
+        ).fetchall()
+        emergency = self._conn.execute(
+            "SELECT 1 FROM audit WHERE subject_type='message' AND subject_id=? "
+            "AND action='communication.emergency_alert_attempted' LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        return {
+            "message_id": message_id,
+            "classification": message["message_type"],
+            "emergency": emergency is not None,
+            "maintenance_request_id": request["id"] if request else None,
+            # More than one inbound-message draft would violate the current
+            # workflow's provenance assumption, so do not choose one
+            # arbitrarily for a demo.
+            "review_draft_id": drafts[0]["draft_id"] if len(drafts) == 1 else None,
+        }
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

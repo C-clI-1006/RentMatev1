@@ -122,6 +122,19 @@
     .review { margin-top: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; }
     .review small { color: var(--muted); }
     .inbox-item { margin-top: 7px; padding: 9px; border-left: 3px solid var(--green); background: var(--green-soft); }
+    .communication-demo { margin-top: 20px; overflow: hidden; }
+    .communication-body { padding: 22px; display: grid; grid-template-columns: minmax(280px, .85fr) minmax(0, 1.4fr); gap: 22px; }
+    .communication-compose p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .communication-compose textarea { min-height: 112px; resize: vertical; }
+    .communication-compose .button { margin-top: 10px; }
+    .trace-state { margin-top: 12px; color: var(--muted); font-size: 11px; min-height: 17px; }
+    .trace-grid { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .trace-item { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+    .trace-item dt { margin-bottom: 5px; color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
+    .trace-item dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .safety-note { margin: 12px 0; padding: 11px 12px; border-left: 3px solid var(--amber); border-radius: 7px; background: var(--amber-soft); color: #78501b; font-size: 11px; line-height: 1.5; }
+    .trace-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .trace-output { margin-top: 10px; max-height: 180px; overflow: auto; padding: 10px; border-radius: 8px; background: #101a30; color: #dfe8ff; white-space: pre-wrap; font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .support { margin: 20px 0 6px; display: flex; justify-content: space-between; align-items: center; gap: 16px; color: var(--muted); font-size: 12px; }
     .support-links { display: flex; flex-wrap: wrap; gap: 8px; }
     .support a { color: #294c9a; text-decoration: none; font-weight: 680; padding: 7px 9px; border-radius: 7px; background: var(--blue-soft); }
@@ -140,6 +153,7 @@
       .check { grid-template-columns: 66px 1fr; }
       .detail { grid-column: 1 / -1; }
       .side-stack, .manual-body { grid-template-columns: 1fr; }
+      .communication-body { grid-template-columns: 1fr; }
       .module-grid { grid-template-columns: 1fr 1fr; }
       .support { align-items: flex-start; flex-direction: column; }
     }
@@ -149,7 +163,7 @@
   <nav class="topbar" aria-label="Primary">
     <div class="topbar-inner">
       <div class="brand"><span class="brand-mark">RM</span><span>RentMate · Stage 2</span></div>
-      <div class="top-links"><a href="#verification">Verification</a><a href="#modules">Coverage</a><a href="/docs">API docs</a></div>
+      <div class="top-links"><a href="#verification">Verification</a><a href="#communication-live">Communication</a><a href="#modules">Coverage</a><a href="/docs">API docs</a></div>
     </div>
   </nav>
 
@@ -230,6 +244,39 @@
       <article class="panel module-card"><div class="module-icon">AC</div><strong>Access control</strong><span>Conceal cross-property records with default-deny checks.</span></article>
     </section>
 
+    <section class="panel communication-demo" id="communication-live">
+      <div class="panel-header">
+        <div><h2>Communication live demo</h2><p>Submit one real tenant message and inspect its exact persisted workflow links.</p></div>
+        <span class="status-dot">Tenant scoped</span>
+      </div>
+      <div class="communication-body">
+        <div class="communication-compose">
+          <p>The tenant identity and property come from the bearer token. The page does not classify text or invent related records.</p>
+          <label for="communicationMessage">Tenant message</label>
+          <textarea id="communicationMessage">There is a strong smell of gas in my kitchen.</textarea>
+          <button class="button primary" id="submitCommunication">Submit message</button>
+          <div class="trace-state" id="communicationState" aria-live="polite">Ready to submit.</div>
+        </div>
+        <div>
+          <dl class="trace-grid">
+            <div class="trace-item"><dt>Message ID</dt><dd id="commMessageId">unavailable</dd></div>
+            <div class="trace-item"><dt>Classification</dt><dd id="commClassification">unavailable</dd></div>
+            <div class="trace-item"><dt>Reply status</dt><dd id="commReplyStatus">unavailable</dd></div>
+            <div class="trace-item"><dt>Delivery status</dt><dd id="commDeliveryStatus">unavailable</dd></div>
+            <div class="trace-item"><dt>Communication emergency indicator</dt><dd id="commEmergency">unavailable</dd></div>
+            <div class="trace-item"><dt>Maintenance request ID</dt><dd id="commRequestId">unavailable</dd></div>
+            <div class="trace-item"><dt>Review draft ID</dt><dd id="commDraftId">unavailable</dd></div>
+          </dl>
+          <div class="safety-note" id="commSafetyNote">No message has been submitted. No approval or delivery is claimed.</div>
+          <div class="trace-actions">
+            <button class="button secondary" id="viewCommunicationMaintenance" disabled>View maintenance request</button>
+            <button class="button secondary" id="viewCommunicationDraft" disabled>View review draft</button>
+          </div>
+          <div class="trace-output" id="communicationDetail">Select a linked record after submission.</div>
+        </div>
+      </div>
+    </section>
+
     <details class="panel manual">
       <summary>Manual demonstration controls</summary>
       <div class="manual-body">
@@ -283,6 +330,82 @@
     }
 
     async function api(path, options = {}) { return (await request(path, options)).data; }
+
+    let communicationSubmitting = false;
+    let communicationLinks = {requestId: null, draftId: null};
+    function setCommunicationField(id, value) {
+      $(id).textContent = value === null || value === undefined || value === '' ? 'unavailable' : String(value);
+    }
+    function resetCommunicationResult() {
+      for (const id of ['commMessageId', 'commClassification', 'commReplyStatus', 'commDeliveryStatus', 'commEmergency', 'commRequestId', 'commDraftId']) {
+        setCommunicationField(id, null);
+      }
+      communicationLinks = {requestId: null, draftId: null};
+      $('viewCommunicationMaintenance').disabled = true;
+      $('viewCommunicationDraft').disabled = true;
+      $('communicationDetail').textContent = 'Select a linked record after submission.';
+      $('commSafetyNote').textContent = 'Submission in progress. No approval or delivery is claimed.';
+    }
+    async function submitCommunication() {
+      if (communicationSubmitting) return;
+      communicationSubmitting = true;
+      const button = $('submitCommunication');
+      button.disabled = true;
+      resetCommunicationResult();
+      $('communicationState').textContent = 'Submitting through the real Communication API…';
+      try {
+        const submitted = await api('/api/communication/messages', {
+          method: 'POST',
+          headers: jsonHeaders($('tenantToken').value.trim()),
+          body: JSON.stringify({content: $('communicationMessage').value})
+        });
+        setCommunicationField('commMessageId', submitted.message_id);
+        setCommunicationField('commReplyStatus', submitted.reply_status);
+        setCommunicationField('commDeliveryStatus', submitted.delivery_status);
+        if (submitted.reply_status === 'pending_review' && submitted.delivery_status === 'not_dispatched') {
+          $('commSafetyNote').textContent = 'Pending manager review: this reply has not been approved and has not been sent to the tenant.';
+        } else {
+          $('commSafetyNote').textContent = `Recorded reply status: ${submitted.reply_status}; delivery status: ${submitted.delivery_status}. No additional approval or delivery is inferred.`;
+        }
+
+        try {
+          const trace = await api(`/api/communication/messages/${encodeURIComponent(submitted.message_id)}/trace`, {
+            headers: auth($('tenantToken').value.trim())
+          });
+          setCommunicationField('commClassification', trace.classification);
+          setCommunicationField('commEmergency', trace.emergency);
+          setCommunicationField('commRequestId', trace.maintenance_request_id);
+          setCommunicationField('commDraftId', trace.review_draft_id);
+          communicationLinks = {requestId: trace.maintenance_request_id, draftId: trace.review_draft_id};
+          $('viewCommunicationMaintenance').disabled = !communicationLinks.requestId;
+          $('viewCommunicationDraft').disabled = !communicationLinks.draftId;
+          $('communicationState').textContent = 'Submitted and verified against exact persisted message links.';
+        } catch (traceError) {
+          $('communicationState').textContent = `Message accepted; persisted trace unavailable — ${traceError.message}`;
+        }
+      } catch (error) {
+        $('communicationState').textContent = `Submission failed — ${error.message}`;
+        $('commSafetyNote').textContent = 'No successful response was received. No workflow outcome is claimed.';
+      } finally {
+        communicationSubmitting = false;
+        button.disabled = false;
+      }
+    }
+    $('submitCommunication').onclick = submitCommunication;
+    $('viewCommunicationMaintenance').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        show('communicationDetail', await api(`/api/maintenance/requests/${encodeURIComponent(communicationLinks.requestId)}`, {headers: auth($('tenantToken').value.trim())}));
+      } catch (error) { show('communicationDetail', `Error — ${error.message}`); }
+      finally { button.disabled = !communicationLinks.requestId; }
+    };
+    $('viewCommunicationDraft').onclick = async event => {
+      const button = event.currentTarget; button.disabled = true;
+      try {
+        show('communicationDetail', await api(`/api/reviews/${encodeURIComponent(communicationLinks.draftId)}`, {headers: auth($('managerToken').value.trim())}));
+      } catch (error) { show('communicationDetail', `Error — ${error.message}`); }
+      finally { button.disabled = !communicationLinks.draftId; }
+    };
 
     let totals = {pass: 0, fail: 0};
     function resetChecks() {

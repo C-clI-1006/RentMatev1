@@ -50,6 +50,16 @@ class MessageResponse(BaseModel):
     delivery_status: Literal["not_dispatched"]
 
 
+class MessageTraceResponse(BaseModel):
+    """Tenant-safe persisted provenance for one submitted message."""
+
+    message_id: str
+    classification: str
+    emergency: bool
+    maintenance_request_id: str | None
+    review_draft_id: str | None
+
+
 def get_connection(request: Request) -> Iterator[sqlite3.Connection]:
     connection = init_connection(request.app.state.db_path)
     try:
@@ -126,6 +136,27 @@ def submit_message(
         # The entry-point check is repeated inside the service so a binding
         # removed between dependency resolution and execution still fails shut.
         raise HTTPException(403, "Tenant is not authorised for this property")
+
+
+@router.get("/messages/{message_id}/trace", response_model=MessageTraceResponse)
+def message_trace(
+    message_id: str,
+    service: Annotated[CommunicationService, Depends(get_service)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
+) -> dict:
+    """Return only persisted links for the authenticated tenant/property.
+
+    A missing or differently scoped message receives the same concealed 404;
+    callers cannot use this endpoint to discover another property's records.
+    """
+
+    try:
+        trace = service.message_trace(auth, message_id)
+    except PermissionError:
+        raise HTTPException(403, "Tenant is not authorised for this property")
+    if trace is None:
+        raise HTTPException(404, "Message not found")
+    return trace
 
 
 @ops_router.post(
