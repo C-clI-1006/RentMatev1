@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import httpx
 
 from communication import CommunicationOutcome, CommunicationService, policy
 from contracts import (
@@ -220,6 +221,36 @@ def test_invalid_classifier_output_hands_off_not_unknown(db):
         (outcome.message_id,),
     ).fetchone()
     assert stored["message_type"] == "unknown"
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_qwen_retry_persists_one_message_and_preserves_handoff(db, monkeypatch, recovers):
+    import json
+    from llm.classifier import QwenClassifier
+
+    calls = []
+
+    def post(self, url, **kwargs):
+        calls.append(1)
+        if len(calls) == 1 or not recovers:
+            raise httpx.ReadTimeout("test timeout")
+        return httpx.Response(200, request=httpx.Request("POST", url), json={
+            "choices": [{"message": {"content": json.dumps({"category": "smalltalk", "confidence": 0.95})}}]
+        })
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    classifier = QwenClassifier(base_url="http://proxy.invalid/v1", api_key="test-key", model="campus-qwen")
+    outcome = make_service(db, classifier=classifier).handle_message(AuthContext(TENANT, PROPERTY), "hello")
+    assert len(calls) == 2
+    assert db.execute("SELECT COUNT(*) FROM message").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM draft").fetchone()[0] == (1 if recovers else 0)
+    assert outcome.tenant_response()["delivery_status"] == "not_dispatched"
+    if recovers:
+        assert outcome.category == "smalltalk"
+        assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
+    else:
+        assert outcome.routed_to == "human"
+        assert outcome.draft is None
 
 
 def test_unknown_category_hands_off(db):
