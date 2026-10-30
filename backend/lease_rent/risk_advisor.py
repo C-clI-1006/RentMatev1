@@ -92,8 +92,14 @@ class LeaseRentRiskAdvisor:
                     "values. Return JSON only with fields risk_category, "
                     "risk_level, explanation, recommended_action, "
                     "supporting_fact_references, requires_manager_review, "
-                    "uncertainty_reason. Never approve, modify records, or send "
-                    "notifications."
+                    "uncertainty_reason. recommended_action must be exactly one "
+                    "of NO_ACTION, PREPARE_REMINDER, "
+                    "REQUEST_PAYMENT_VERIFICATION, REQUEST_MANAGER_REVIEW, or "
+                    "PREPARE_LEASE_EXPIRY_NOTICE. For overdue rent, do not use "
+                    "PREPARE_LEASE_EXPIRY_NOTICE. For an expiring lease, do not "
+                    "use PREPARE_REMINDER or REQUEST_PAYMENT_VERIFICATION. "
+                    "requires_manager_review must be true. Never approve, modify "
+                    "records, or send notifications."
                 )},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
@@ -136,8 +142,8 @@ class LeaseRentRiskAdvisor:
                 {str(item.get("source_id")) for item in verified_facts}
             ):
                 return self._fallback("unverified_reference")
-            if not recommendation.requires_manager_review:
-                recommendation = recommendation.model_copy(update={"requires_manager_review": True})
+            if not validate_action(risk, recommendation):
+                return self._fallback("invalid_action")
             return RiskAssessmentResult(source="llm", recommendation=recommendation)
         except httpx.HTTPError:
             return self._fallback("unavailable")

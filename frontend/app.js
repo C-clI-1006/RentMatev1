@@ -162,7 +162,14 @@ async function notifications() {
 }
 async function lease() {
   const q=await request('/api/reviews'); const reminders=q.filter(r=>['rent_reminder','lease_deadline'].includes(r.draft.source_kind));
-  return notice('General lease and rent ledger APIs are not exposed. This view uses persisted reminder drafts from the authorized scheduled scan. It does not calculate balances or deadlines in the browser.')+operations('scan')+'<section class="card"><h2>Lease & rent risk assessment</h2><p class="muted">The backend applies deterministic rules first, then asks the configured Qwen model for a bounded recommendation. Recommendations still require manager review.</p><button data-action="risk" class="small">Assess current risks</button><div id="riskResults"></div></section><section class="card"><h2>Reminder drafts awaiting review</h2><p class="muted">Open Review Centre to approve or reject. Delivery remains a separate action.</p>'+button('Open Review Centre','navigate','reviews')+'</section>'+reviewCards(reminders)+operations('dispatch');
+  const latest=state.operations.find(item=>item.name==='risk')?.result;
+  const riskCards=latest?.results?.length?latest.results.map(item=>{
+    const recommendation=item.assessment?.recommendation;
+    const heading=item.risk?.summary || 'Incomplete lease or rent facts';
+    if(!recommendation) return '<article class="inbox-item"><div class="card-head"><h3>'+esc(heading)+'</h3>'+badge('manual review')+'</div><p>The AI recommendation was not accepted.</p><p><strong>Reason:</strong> '+esc(item.assessment?.failure_code || 'unavailable')+'</p><p class="hint">Source: '+esc(item.source?.source_id || item.risk?.source_id || 'unavailable')+'</p></article>';
+    return '<article class="inbox-item"><div class="card-head"><h3>'+esc(heading)+'</h3>'+badge(item.risk?.severity)+'</div><p>'+esc(recommendation.explanation)+'</p><dl><dt>Recommended action</dt><dd><strong>'+esc(recommendation.recommended_action.replaceAll('_',' '))+'</strong></dd><dt>Manager review</dt><dd>'+esc(recommendation.requires_manager_review?'Required':'Not required')+'</dd><dt>Supporting facts</dt><dd>'+esc(recommendation.supporting_fact_references.join(', '))+'</dd></dl>'+(recommendation.uncertainty_reason?'<p class="hint"><strong>Uncertainty:</strong> '+esc(recommendation.uncertainty_reason)+'</p>':'')+'<p class="hint">AI source: '+esc(item.assessment.source)+' · Rule: '+esc(item.risk?.rule_id)+'</p></article>';
+  }).join(''):empty('Run an assessment to see current verified risks and the bounded Qwen recommendation.');
+  return notice('General lease and rent ledger APIs are not exposed. This view uses persisted reminder drafts from the authorized scheduled scan. It does not calculate balances or deadlines in the browser.')+operations('scan')+'<section class="card"><h2>Lease & rent risk assessment</h2><p class="muted">The backend applies deterministic rules first, then asks the configured Qwen model for a bounded recommendation. Recommendations still require manager review.</p><button data-action="risk" class="small">Assess current risks</button><div id="riskResults">'+riskCards+'</div></section><section class="card"><h2>Reminder drafts awaiting review</h2><p class="muted">Open Review Centre to approve or reject. Delivery remains a separate action.</p>'+button('Open Review Centre','navigate','reviews')+'</section>'+reviewCards(reminders)+operations('dispatch');
 }
 function reportPeriod() { const parts=new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Sydney',year:'numeric',month:'numeric'}).formatToParts(new Date()); return {year:Number(parts.find(p=>p.type==='year').value),month:Number(parts.find(p=>p.type==='month').value)}; }
 async function reports() {
@@ -278,7 +285,7 @@ document.addEventListener('click', async e=>{
     if(['scan','handoff','dispatch','risk'].includes(action)) {
       if(!confirm('Run this local operations action using the separate scheduler credential?')) return;
       const paths={scan:'/api/ops/rent-alerts/run',handoff:'/api/ops/communication/maintenance-events/run',dispatch:'/api/ops/notifications/dispatch',risk:'/api/ops/lease-rent/risk-assessment'};
-      const data=await ops(paths[action]); state.operations.unshift({name:action,result:data}); state.operations=state.operations.slice(0,5); context=await refreshCurrent(state.page,context); flash(action+' completed. Actual result: '+JSON.stringify(data));
+      const data=await ops(paths[action]); state.operations.unshift({name:action,result:data}); state.operations=state.operations.slice(0,5); context=await refreshCurrent(state.page,context); flash(action==='risk'?'Risk assessment completed. Review the verified results below.':action+' completed. Actual result: '+JSON.stringify(data));
     }
   });
 });

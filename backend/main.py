@@ -110,7 +110,7 @@ def assess_lease_rent_risks(request: Request) -> dict:
     """
     from dataclasses import asdict
     from datetime import date
-    from decimal import Decimal
+    from decimal import Decimal, InvalidOperation
     from lease_rent import (
         LeaseDeadlineInput, LeaseRentRiskAdvisor, RentRecordInput,
         assess_lease_risk, assess_rent_risk,
@@ -124,10 +124,31 @@ def assess_lease_rent_risks(request: Request) -> dict:
         for row in connection.execute(
             "SELECT rent_record_id,due_date,amount_due,amount_paid FROM rent_record"
         ).fetchall():
-            risk = assess_rent_risk(
-                RentRecordInput(str(row[0]), date.fromisoformat(row[1]), Decimal(str(row[2])), Decimal(str(row[3]))),
-                as_of=today,
-            )
+            source_id = str(row[0])
+            try:
+                if row[1] is None or row[2] is None or row[3] is None:
+                    raise ValueError("missing authoritative rent facts")
+                risk = assess_rent_risk(
+                    RentRecordInput(
+                        source_id,
+                        date.fromisoformat(str(row[1])),
+                        Decimal(str(row[2])),
+                        Decimal(str(row[3])),
+                    ),
+                    as_of=today,
+                )
+            except (InvalidOperation, TypeError, ValueError):
+                results.append({
+                    "risk": None,
+                    "source": {"source_type": "rent_record", "source_id": source_id},
+                    "assessment": {
+                        "recommendation": None,
+                        "source": "fallback",
+                        "failure_code": "incomplete_authoritative_facts",
+                    },
+                    "requires_manager_review": True,
+                })
+                continue
             if risk:
                 result = LeaseRentRiskAdvisor().assess(
                     risk, verified_facts=[{"source_id": risk.source_id, "status": "overdue"}]
