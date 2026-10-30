@@ -31,7 +31,7 @@ function harness(respond) {
   }
   const context=vm.createContext({document,api:async(path,options)=>{calls.push({path,options});return respond(path,options);},
     FormData:Data,crypto:{randomUUID},confirm:()=>true,setTimeout,URL,console});
-  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory};',context);
+  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory,documentReviewStatus,documentReviewForm};',context);
   const ui=context.ui;
   Object.assign(ui.state,{token:'manager-P1',property:'P1',role:'manager',scheduler:'ops-P1',epoch:1});
   function switchSession() {
@@ -174,4 +174,51 @@ test('automatic category is visible before optional manager review',()=>{
  assert.equal(ui.documentCategory({classification:'classified',review_required:false,machine_category:'invoice',final_category:'lease_document'}), 'lease_document');
  assert.equal(ui.documentCategory({classification:'failed',review_required:true,machine_category:null}), 'Manual review required');
  assert.equal(ui.documentCategory({classification:'classified',review_required:null,machine_category:'invoice'}), 'Not available');
+});
+
+
+test('accepted automatic results require no manager confirmation',async()=>{
+ const doc={document_id:'invoice-1',original_filename:'invoice.pdf',classification:'classified',review_required:false,machine_category:'invoice',final_category:null};
+ const h=harness(()=>doc);
+ assert.equal(h.ui.documentReviewStatus(doc),'Not required');
+ await h.ui.documentDetail(doc.document_id);
+ const html=h.nodes.get('content').innerHTML;
+ assert.ok(html.includes('<dt>Category</dt><dd>invoice</dd>'));
+ assert.ok(html.includes('<dt>Manager review</dt><dd>Not required</dd>'));
+ assert.ok(html.includes('<details id="classificationCorrection"><summary>Correct classification (optional)</summary>'));
+ assert.ok(!html.includes('id="classificationCorrection" open'));
+ assert.ok(!html.includes('Confirm stored suggestion'));
+});
+
+test('uncertain and failed results show required review without optional collapse',()=>{
+ const {ui}=harness(()=>[]);
+ for(const doc of [
+  {classification:'failed',review_required:true,machine_category:null},
+  {classification:'classified',review_required:true,machine_category:'invoice'},
+  {classification:'classified',review_required:null,machine_category:'invoice'}
+ ]) {
+  assert.equal(ui.documentReviewStatus(doc),'Review required');
+  const form=ui.documentReviewForm(doc);
+  assert.ok(form.includes('Manual review required'));
+  assert.ok(form.includes('Save classification review'));
+  assert.ok(!form.includes('<details'));
+ }
+});
+
+test('human corrections remain reviewed while pending outcomes do not claim success',()=>{
+ const {ui}=harness(()=>[]);
+ assert.equal(ui.documentReviewStatus({classification:'failed',review_required:false,final_category:'invoice',reviewed_by:'manager'}),'Reviewed');
+ assert.equal(ui.documentReviewStatus({classification:'pending',review_required:null}),'Pending classification');
+ assert.ok(!ui.documentReviewForm({classification:'pending',review_required:null}).includes('<form'));
+});
+
+test('guided workflow completes automatic classification without a manager decision',async()=>{
+ const doc={document_id:'invoice-guided',classification:'classified',review_required:false,machine_category:'invoice',final_category:null};
+ const h=harness(path=>path.includes('/api/evidence/documents')?[doc]:[]);
+ h.ui.state.selectedDocument=doc;
+ await h.ui.render('guided');
+ const html=h.nodes.get('content').innerHTML;
+ assert.ok(html.includes('<li class="done"><div>Accept classification or resolve review'));
+ assert.ok(html.includes('invoice · Not required'));
+ assert.ok(!html.includes('Manager settles the category'));
 });
