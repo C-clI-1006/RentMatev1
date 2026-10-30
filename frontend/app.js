@@ -135,7 +135,7 @@ function events(items) {
 }
 async function documents() {
   const docs=await request('/api/evidence/documents?'+propQuery());
-  return '<section class="card"><h2>Upload a document</h2><p class="muted">Keep the original file and its classification outcome together. Upload success and classification success are separate.</p><form id="uploadForm"><label>Document<input name="file" type="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt"></label><p class="hint">PDF, image, Office and text files are supported. Classification may need manual review.</p><button>Upload document</button></form></section><section class="card"><h2>Property documents</h2>'+documentTable(docs)+'</section>';
+  return '<section class="card"><h2>Upload a document</h2><p class="muted">Keep the original file and its classification outcome together. Upload success and classification success are separate.</p><form id="uploadForm"><label>Document<span class="file-picker"><span class="file-picker-action" aria-hidden="true">Choose file</span><span id="documentFileName" role="status">No file selected</span><input id="documentFile" name="file" type="file" aria-label="Choose document" aria-describedby="documentFileName" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt"></span></label><p class="hint">PDF, image, Office and text files are supported. Classification may need manual review.</p><button>Upload document</button></form></section><section class="card"><h2>Property documents</h2>'+documentTable(docs)+'</section>';
 }
 async function documentDetail(id) {
   const d=await request('/api/evidence/documents/'+enc(id)+'?'+propQuery()); state.selectedDocument=d;
@@ -360,3 +360,8 @@ document.addEventListener('submit',async e=>{
   finally { f.dataset.busy='false'; controls.forEach(b=>b.disabled=false); }
 });
 render();
+
+// Native file-control captions follow the OS language; keep page captions English.
+document.addEventListener('change',event=>{
+  if(event.target.id==='documentFile') $('documentFileName').textContent=event.target.files?.[0]?.name || 'No file selected';
+});
