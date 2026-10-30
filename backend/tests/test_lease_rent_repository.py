@@ -14,7 +14,12 @@ from lease_rent import (
     SQLiteLeaseRentRepository,
     run_lease_deadline_check,
     run_overdue_rent_check,
+    LeaseDeadlineInput,
+    RentRecordInput,
+    assess_lease_risk,
+    assess_rent_risk,
 )
+from decimal import Decimal
 
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
@@ -79,6 +84,29 @@ def test_schema_uses_due_date_and_three_state_model(db):
             "VALUES ('rent-partial', 'lease-1', 'property-1', '2026-11', "
             "'2026-11-01', 1000, 250, 'partial', '2026-11-01T00:00:00Z')"
         )
+
+
+def test_risk_assessment_is_source_backed_and_deterministic():
+    rent_risk = assess_rent_risk(
+        RentRecordInput("rent-risk", date(2026, 10, 1), Decimal("100"), Decimal("0")),
+        as_of=date(2026, 10, 20),
+    )
+    assert rent_risk is not None
+    assert (rent_risk.rule_id, rent_risk.severity.value, rent_risk.source_id) == (
+        "risk.overdue_rent", "high", "rent-risk"
+    )
+
+    lease_risk = assess_lease_risk(
+        LeaseDeadlineInput("lease-risk", date(2026, 1, 1), date(2026, 11, 19)),
+        as_of=date(2026, 10, 20),
+        reminder_window_days=30,
+    )
+    assert lease_risk is not None
+    assert lease_risk.rule_id == "risk.lease_expiring"
+    assert assess_rent_risk(
+        RentRecordInput("paid", date(2026, 10, 1), Decimal("100"), Decimal("100")),
+        as_of=date(2026, 10, 20),
+    ) is None
 
 
 def test_sqlite_repository_verifies_tenant_property_binding(db):

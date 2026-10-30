@@ -97,6 +97,59 @@ def run_rent_alerts(request: Request, now: str | None = None) -> dict:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@ops_router.post(
+    "/api/ops/lease-rent/risk-assessment",
+    dependencies=[Depends(require_scheduler)],
+)
+def assess_lease_rent_risks(request: Request) -> dict:
+    """Run the bounded Lease/Rent risk advisor for the demo property.
+
+    This is an operations action, not an approval or dispatch endpoint. The
+    deterministic rules select source rows; Qwen can only recommend a
+    manager-reviewed next action.
+    """
+    from dataclasses import asdict
+    from datetime import date
+    from decimal import Decimal
+    from lease_rent import (
+        LeaseDeadlineInput, LeaseRentRiskAdvisor, RentRecordInput,
+        assess_lease_risk, assess_rent_risk,
+    )
+    from shared.sqlite import init_connection
+
+    connection = init_connection(request.app.state.db_path)
+    try:
+        today = date.today()
+        results = []
+        for row in connection.execute(
+            "SELECT rent_record_id,due_date,amount_due,amount_paid FROM rent_record"
+        ).fetchall():
+            risk = assess_rent_risk(
+                RentRecordInput(str(row[0]), date.fromisoformat(row[1]), Decimal(str(row[2])), Decimal(str(row[3]))),
+                as_of=today,
+            )
+            if risk:
+                result = LeaseRentRiskAdvisor().assess(
+                    risk, verified_facts=[{"source_id": risk.source_id, "status": "overdue"}]
+                )
+                results.append({"risk": asdict(risk), "assessment": result.model_dump(mode="json")})
+        for row in connection.execute(
+            "SELECT lease_id,start_date,end_date FROM lease WHERE end_date IS NOT NULL"
+        ).fetchall():
+            risk = assess_lease_risk(
+                LeaseDeadlineInput(str(row[0]), date.fromisoformat(row[1]), date.fromisoformat(row[2])),
+                as_of=today, reminder_window_days=30,
+            )
+            if risk:
+                result = LeaseRentRiskAdvisor().assess(
+                    risk, verified_facts=[{"source_id": risk.source_id, "end_date": row[2]}]
+                )
+                results.append({"risk": asdict(risk), "assessment": result.model_dump(mode="json")})
+        return {"as_of": today.isoformat(), "results": results}
+    finally:
+        connection.close()
+
+
 def create_app(
     db_path: str | None = None,
     storage_root: str | None = None,

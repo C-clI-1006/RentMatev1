@@ -162,7 +162,7 @@ async function notifications() {
 }
 async function lease() {
   const q=await request('/api/reviews'); const reminders=q.filter(r=>['rent_reminder','lease_deadline'].includes(r.draft.source_kind));
-  return notice('General lease and rent ledger APIs are not exposed. This view uses persisted reminder drafts from the authorized scheduled scan. It does not calculate balances or deadlines in the browser.')+operations('scan')+'<section class="card"><h2>Reminder drafts awaiting review</h2><p class="muted">Open Review Centre to approve or reject. Delivery remains a separate action.</p>'+button('Open Review Centre','navigate','reviews')+'</section>'+reviewCards(reminders)+operations('dispatch');
+  return notice('General lease and rent ledger APIs are not exposed. This view uses persisted reminder drafts from the authorized scheduled scan. It does not calculate balances or deadlines in the browser.')+operations('scan')+'<section class="card"><h2>Lease & rent risk assessment</h2><p class="muted">The backend applies deterministic rules first, then asks the configured Qwen model for a bounded recommendation. Recommendations still require manager review.</p><button data-action="risk" class="small">Assess current risks</button><div id="riskResults"></div></section><section class="card"><h2>Reminder drafts awaiting review</h2><p class="muted">Open Review Centre to approve or reject. Delivery remains a separate action.</p>'+button('Open Review Centre','navigate','reviews')+'</section>'+reviewCards(reminders)+operations('dispatch');
 }
 function reportPeriod() { const parts=new Intl.DateTimeFormat('en-AU',{timeZone:'Australia/Sydney',year:'numeric',month:'numeric'}).formatToParts(new Date()); return {year:Number(parts.find(p=>p.type==='year').value),month:Number(parts.find(p=>p.type==='month').value)}; }
 async function reports() {
@@ -275,9 +275,9 @@ document.addEventListener('click', async e=>{
     if(action==='download') {
       const blob=await request('/api/evidence/documents/'+enc(id)+'/download?'+propQuery(),{binary:true}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=id+'.'+state.selectedDocument.file_type; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
     }
-    if(['scan','handoff','dispatch'].includes(action)) {
+    if(['scan','handoff','dispatch','risk'].includes(action)) {
       if(!confirm('Run this local operations action using the separate scheduler credential?')) return;
-      const paths={scan:'/api/ops/rent-alerts/run',handoff:'/api/ops/communication/maintenance-events/run',dispatch:'/api/ops/notifications/dispatch'};
+      const paths={scan:'/api/ops/rent-alerts/run',handoff:'/api/ops/communication/maintenance-events/run',dispatch:'/api/ops/notifications/dispatch',risk:'/api/ops/lease-rent/risk-assessment'};
       const data=await ops(paths[action]); state.operations.unshift({name:action,result:data}); state.operations=state.operations.slice(0,5); context=await refreshCurrent(state.page,context); flash(action+' completed. Actual result: '+JSON.stringify(data));
     }
   });

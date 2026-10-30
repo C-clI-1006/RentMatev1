@@ -9,8 +9,50 @@ from .models import (
     LeaseDeadlineStatus,
     RentAssessment,
     RentRecordInput,
+    LeaseRentRisk,
+    RiskSeverity,
     RentStatus,
 )
+
+
+def assess_rent_risk(record: RentRecordInput, *, as_of: date) -> LeaseRentRisk | None:
+    """Return the deterministic UC4 risk, if this rent record is overdue."""
+
+    assessment = assess_rent(record, as_of=as_of)
+    if not assessment.reminder_eligible:
+        return None
+    return LeaseRentRisk(
+        rule_id="risk.overdue_rent",
+        severity=RiskSeverity.HIGH,
+        source_type="rent_record",
+        source_id=record.rent_record_id,
+        summary="Rent record is overdue",
+    )
+
+
+def assess_lease_risk(
+    lease: LeaseDeadlineInput,
+    *,
+    as_of: date,
+    reminder_window_days: int,
+) -> LeaseRentRisk | None:
+    """Return the deterministic UC5 risk, if a lease is nearing expiry."""
+
+    assessment = assess_lease_deadline(
+        lease,
+        as_of=as_of,
+        reminder_window_days=reminder_window_days,
+        alert_already_exists=False,
+    )
+    if not assessment.alert_eligible:
+        return None
+    return LeaseRentRisk(
+        rule_id="risk.lease_expiring",
+        severity=RiskSeverity.MEDIUM,
+        source_type="lease",
+        source_id=lease.lease_id,
+        summary="Lease expires within the reminder threshold",
+    )
 
 
 def assess_rent(record: RentRecordInput, *, as_of: date) -> RentAssessment:

@@ -19,6 +19,28 @@ class RentStatus(str, Enum):
     OVERDUE = "overdue"
 
 
+class RiskSeverity(str, Enum):
+    """Severity assigned by the deterministic lease/rent risk rules."""
+
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseRentRisk:
+    """A source-backed risk raised by UC4/UC5 rules.
+
+    This is deliberately a structured result: no LLM wording or inferred
+    facts are involved, and callers can trace the result to its source row.
+    """
+
+    rule_id: str
+    severity: RiskSeverity
+    source_type: str
+    source_id: str
+    summary: str
+
+
 @dataclass(frozen=True, slots=True)
 class RentAssessment:
     """Result of evaluating one rent record as at a given date."""

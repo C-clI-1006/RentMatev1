@@ -16,15 +16,26 @@ from .models import (
     RentRecordInput,
     RentReminderCandidate,
     RentStatus,
+    LeaseRentRisk,
+    RiskSeverity,
     VerifiedFactRecord,
 )
 from .repository import LeaseRentDataError, SQLiteLeaseRentRepository
 from .reporting import SQLiteLeaseRentReportSource
 from .rules import (
     assess_lease_deadline,
+    assess_lease_risk,
     assess_rent,
+    assess_rent_risk,
     lease_deadline_alert_key,
     rent_reminder_key,
+)
+from .risk_advisor import (
+    LeaseRentRiskAdvisor,
+    RiskAction,
+    RiskAssessmentResult,
+    RiskRecommendation,
+    validate_action,
 )
 from .service import (
     prepare_deadline_alert,
@@ -48,11 +59,15 @@ __all__ = [
     "RentRecordInput",
     "RentReminderCandidate",
     "RentStatus",
+    "LeaseRentRisk",
+    "RiskSeverity",
     "SQLiteLeaseRentRepository",
     "SQLiteLeaseRentReportSource",
     "VerifiedFactRecord",
     "assess_lease_deadline",
+    "assess_lease_risk",
     "assess_rent",
+    "assess_rent_risk",
     "lease_deadline_alert_key",
     "prepare_deadline_alert",
     "prepare_deadline_alert_batch",
@@ -62,4 +77,9 @@ __all__ = [
     "run_lease_deadline_check",
     "run_overdue_rent_check",
     "run_due_alerts",
+    "LeaseRentRiskAdvisor",
+    "RiskAction",
+    "RiskAssessmentResult",
+    "RiskRecommendation",
+    "validate_action",
 ]
