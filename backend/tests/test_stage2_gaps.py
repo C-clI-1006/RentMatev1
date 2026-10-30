@@ -257,7 +257,7 @@ def test_v10_upgrade_recovers_audited_handoff_without_fabricating_reminder_basis
     db.execute('DROP TABLE communication_handoff');db.execute('DROP TABLE reminder_basis')
     db.execute('PRAGMA user_version=10');db.commit()
     upgraded = init_connection(path)
-    assert upgraded.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION == 11
+    assert upgraded.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION == 12
     assert upgraded.execute('SELECT reason FROM communication_handoff').fetchone()[0] == 'legacy_handoff'
     assert upgraded.execute('SELECT COUNT(*) FROM reminder_basis').fetchone()[0] == 0
     upgraded.close()

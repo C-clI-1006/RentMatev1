@@ -36,7 +36,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _TENANT_INBOX_DDL = """
 CREATE TABLE IF NOT EXISTS tenant_inbox (
@@ -416,6 +416,26 @@ def _ensure_v11_handoffs_and_reminder_basis(conn: Connection) -> None:
             GROUP BY m.message_id,m.property_id""")
 
 
+def _ensure_v12_evidence_record_links(conn: Connection) -> None:
+    """Allow several documents per related record; preserve historical links."""
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(evidence_association)")}
+    if not columns:
+        return
+    conn.execute("SAVEPOINT evidence_links_v12")
+    try:
+        if "associated_by" not in columns:
+            conn.execute("ALTER TABLE evidence_association ADD COLUMN associated_by TEXT REFERENCES manager(manager_id)")
+        conn.execute("DROP INDEX IF EXISTS idx_evidence_association_target")
+        conn.execute("CREATE UNIQUE INDEX idx_evidence_association_target "
+                     "ON evidence_association(document_id,target_type,target_id)")
+        conn.execute("RELEASE evidence_links_v12")
+    except BaseException:
+        conn.execute("ROLLBACK TO evidence_links_v12")
+        conn.execute("RELEASE evidence_links_v12")
+        raise
+
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
@@ -428,6 +448,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     9: _ensure_v9_manager_inbox,
     10: _ensure_v10_manager_evidence,
     11: _ensure_v11_handoffs_and_reminder_basis,
+    12: _ensure_v12_evidence_record_links,
 }
 
 

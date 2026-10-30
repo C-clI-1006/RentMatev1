@@ -427,7 +427,7 @@ class IEvidenceReview(ABC):
 
 
 class IEvidenceTimeline(ABC):
-    """Reserved: per-property evidence timeline (later increment)."""
+    """Legacy document-only interface; PropertyEvidence exposes the event projection."""
 
     @abstractmethod
     def timeline(self, property_id: PropertyId) -> list[EvidenceDocumentRef]:

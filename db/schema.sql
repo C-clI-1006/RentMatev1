@@ -352,8 +352,8 @@ CREATE TABLE IF NOT EXISTS evidence_classification (
     PRIMARY KEY (document_id)
 );
 
--- Reserved for future association increments (document -> maintenance
--- request / lease). No rows are written in this increment.
+-- Manager-selected links to existing Maintenance requests or leases.
+-- A related record may have several supporting documents.
 CREATE TABLE IF NOT EXISTS evidence_association (
     association_id TEXT PRIMARY KEY,
     document_id    TEXT NOT NULL REFERENCES evidence_document(document_id),
@@ -361,11 +361,12 @@ CREATE TABLE IF NOT EXISTS evidence_association (
     target_id      TEXT NOT NULL,
     status         TEXT NOT NULL DEFAULT 'unassociated', -- unassociated | associated | failed
     created_at     TEXT NOT NULL,
-    associated_at  TEXT
+    associated_at  TEXT,
+    associated_by  TEXT REFERENCES manager(manager_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_association_target
-    ON evidence_association (target_type, target_id);
+    ON evidence_association (document_id, target_type, target_id);
 
 -- Manager review of classification outcomes (owned: evidence — manager review
 -- increment). Append-only: one row PER REVIEW, so the same document may
