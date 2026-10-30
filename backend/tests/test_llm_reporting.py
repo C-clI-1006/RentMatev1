@@ -92,6 +92,67 @@ def _respond(monkeypatch, content):
     monkeypatch.setattr(httpx.Client, "post", post)
 
 
+def _capture_request(monkeypatch):
+    """Patch the client so the sent body is recorded and a valid reply returned."""
+    captured = {}
+
+    def post(self, url, **kwargs):
+        captured["body"] = kwargs["json"]
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"choices": [{"message": {"content": '{"summary": "ok"}'}}]},
+        )
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    return captured
+
+
+def _system_prompt(body):
+    return body["messages"][0]["content"]
+
+
+def _user_payload(body):
+    return json.loads(body["messages"][1]["content"])
+
+
+def test_system_prompt_distinguishes_empty_from_unavailable(config, monkeypatch):
+    captured = _capture_request(monkeypatch)
+    _call(monkeypatch)
+    prompt = _system_prompt(captured["body"]).lower()
+    # The prompt must teach all three states and keep them apart.
+    assert "available" in prompt
+    assert "empty" in prompt
+    assert "not_available" in prompt
+    # EMPTY means zero records, and must not be called "unavailable".
+    assert "no records this period" in prompt
+    assert "data unavailable" in prompt
+    assert "unavailable" in prompt  # the ban on conflating the states
+    # The prompt must forbid the two confusions explicitly.
+    assert "never" in prompt
+
+
+def test_user_payload_is_self_explanatory(config, monkeypatch):
+    captured = _capture_request(monkeypatch)
+    _call(monkeypatch)
+    payload = _user_payload(captured["body"])
+    # Per-section availability must be present in the payload itself.
+    assert payload["maintenance"]["availability"] == "available"
+    assert payload["rent"]["availability"] == "available"
+    assert payload["lease"]["availability"] == "not_available"
+    # The NOT_AVAILABLE note must travel with the payload.
+    assert payload["lease"]["note"] == "lease source unavailable for test"
+    # A legend key must define each state, separating empty from unavailable.
+    legend = payload["availability_legend"]
+    assert "available" in legend
+    assert "empty" in legend
+    assert "not_available" in legend
+    # EMPTY must be described as "no records", NOT "unavailable".
+    assert "unavailable" not in legend["empty"].lower()
+    # NOT_AVAILABLE must be described as "unavailable".
+    assert "unavailable" in legend["not_available"].lower()
+
+
 def test_unconfigured_returns_missing_without_network(monkeypatch):
     for var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
         monkeypatch.delenv(var, raising=False)
