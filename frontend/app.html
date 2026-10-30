@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RentMate · Property workspace</title>
+  <link rel="stylesheet" href="/app-assets/app.css">
+  <script type="module" src="/app-assets/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/app"><span class="brand-icon">R</span>RentMate<span class="brand-dot">.</span></a>
+    <div class="workspace-label">YOUR WORKSPACE</div>
+    <nav id="navigation" aria-label="Main navigation"></nav>
+    <div class="sidebar-bottom"><span class="environment">LOCAL DEMO</span><p>One property. Every detail connected.</p><a href="/demo">Technical verification ↗</a></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><div><span class="context-label">PROPERTY CONTEXT</span><strong id="propertyContext">Not connected</strong></div><div class="account"><span id="roleIndicator" class="badge">Tenant portal</span><button id="modelSettingsButton" class="secondary">AI settings</button><button id="sessionButton" class="secondary">Session settings</button></div></header>
+    <main id="main"><div class="page-heading"><div><span class="eyebrow">PROPERTY WORKSPACE</span><h1 id="pageTitle">Welcome home</h1><p id="pageSubtitle">A clearer view of everything that matters.</p></div><button id="refreshButton" class="secondary">Refresh</button></div><div id="feedback" role="status" aria-live="polite"></div><div id="content"></div></main>
+    <footer>RentMate · Stage 2 prototype <span>Local inbox delivery · Server-enforced property access</span></footer>
+  </div>
+  <dialog id="sessionDialog" aria-labelledby="sessionTitle"><form id="sessionForm"><h2 id="sessionTitle">Connect your workspace</h2><p>Use a token configured by your local launcher. Role selection changes navigation; the server authorizes every request.</p><label>Portal<select name="role"><option value="tenant">Tenant</option><option value="manager">Property manager</option></select></label><label>Property context<input name="property" placeholder="Property ID from your session" required autocomplete="off"></label><label>Session token<input name="token" type="password" required autocomplete="off"></label><details><summary>Local operations credential (optional)</summary><p>Separate scheduler access for scans, handoff and delivery. Never required for ordinary tenant actions.</p><label>Scheduler token<input name="scheduler" type="password" autocomplete="off"></label></details><p class="hint">Tokens stay in this tab's memory and are cleared on reload. Demo token values are shown on <a href="/demo" target="_blank" rel="noopener">the technical demo</a>.</p><div class="actions"><button type="button" id="cancelSession" class="secondary">Cancel</button><button>Connect workspace</button></div></form></dialog>
+  <dialog id="modelSettingsDialog" aria-labelledby="modelSettingsTitle"><form id="modelSettingsForm"><h2 id="modelSettingsTitle">Real model connection</h2><p>Configure the shared OpenAI-compatible API for Communication, Maintenance, Evidence and Reporting. Changes apply to this running local server.</p><label>Local operations token<input name="operator_token" type="password" required autocomplete="off"></label><button type="button" id="loadModelSettings" class="secondary">Load current settings</button><label>API base address<input name="base_url" type="url" required placeholder="http://your-course-proxy:8000/v1" autocomplete="off"></label><label>Model name<input name="model" required placeholder="Your authorized model name" autocomplete="off"></label><label>API key<input name="api_key" type="password" autocomplete="off" placeholder="Enter key; blank keeps current key at the same address"></label><p class="hint">The API key is never read back or stored in browser storage. Re-enter it when changing the address. Settings are held in server memory until restart. Separate scheduled-task processes still use their environment or backend/.env.</p><div id="modelSettingsResult" role="status" aria-live="polite"></div><div class="actions"><button>Apply settings</button><button type="button" id="testModelSettings" class="secondary">Test model connection</button><button type="button" id="restoreModelSettings" class="secondary">Restore startup settings</button><button type="button" id="closeModelSettings" class="secondary">Close</button></div><p class="hint">Test model connection makes a real API call with a harmless greeting. Saving settings alone does not verify inference. Use this interface only on your own local computer.</p></form></dialog>
+</body>
+</html>

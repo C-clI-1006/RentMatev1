@@ -434,9 +434,11 @@ def apply_schema(conn: Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
-def init_connection(db_path: str | Path = ":memory:") -> Connection:
+def init_connection(
+    db_path: str | Path = ":memory:", *, check_same_thread: bool = True
+) -> Connection:
     """Open a connection with schema applied and foreign keys enabled."""
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     apply_schema(conn)

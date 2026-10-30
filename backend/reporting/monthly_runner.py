@@ -13,6 +13,7 @@ import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Sequence
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -23,6 +24,7 @@ from contracts.reporting import (  # noqa: E402
     ReportGenerated,
     ReportGenerationError,
     ReportPeriod,
+    REPORTING_TIMEZONE,
     ScheduledReportTrigger,
 )
 from lease_rent.reporting import SQLiteLeaseRentReportSource  # noqa: E402
@@ -33,6 +35,16 @@ from reporting.collector import ReportDataCollector  # noqa: E402
 from reporting.repository import ReportRepository  # noqa: E402
 from reporting.service import ReportService  # noqa: E402
 from shared.sqlite import init_connection  # noqa: E402
+
+BUSINESS_TIMEZONE = REPORTING_TIMEZONE
+
+
+def scheduled_period(now: datetime | None = None) -> ReportPeriod:
+    """Last completed Sydney calendar month, independent of the host timezone."""
+    instant = now if now is not None else datetime.now(timezone.utc)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("Scheduler time must be timezone-aware")
+    return previous_month(instant.astimezone(ZoneInfo(BUSINESS_TIMEZONE)).date())
 
 
 def previous_month(today: date) -> ReportPeriod:
@@ -121,6 +133,7 @@ def run_monthly_reports(
         "started_at": _iso(started_at),
         "finished_at": _iso(datetime.now(timezone.utc)),
         "period": period.label,
+        "business_timezone": BUSINESS_TIMEZONE,
         "property_count": len(property_ids),
         "succeeded": sum(item["status"] == "succeeded" for item in results),
         "failed": sum(item["status"] == "failed" for item in results),
@@ -150,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         period = (
             ReportPeriod(year=args.year, month=args.month)
             if args.year is not None
-            else previous_month(datetime.now().astimezone().date())
+            else scheduled_period()
         )
     except ValueError as error:
         parser.error(str(error))

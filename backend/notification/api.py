@@ -32,7 +32,8 @@ class InboxItem(BaseModel):
 
 
 def get_connection(request: Request) -> Iterator[sqlite3.Connection]:
-    connection = init_connection(request.app.state.db_path)
+    # FastAPI may resume the request in another worker thread.
+    connection = init_connection(request.app.state.db_path, check_same_thread=False)
     try:
         yield connection
     finally:

@@ -236,7 +236,13 @@ def dispatch_one(
                 f"{event_id}:{recipient_id}",
                 event_id,
                 json.dumps(
-                    {"recipient_id": recipient_id, "attempts": attempts},
+                    {
+                        "recipient_id": recipient_id,
+                        "attempts": attempts,
+                        **({"reason": "recipient_property_authorization_denied"}
+                           if detail == "recipient is no longer authorised for property"
+                           else {}),
+                    },
                     ensure_ascii=False,
                     sort_keys=True,
                 ),
@@ -349,6 +355,16 @@ def _authorised_tenant_payload(
     if not isinstance(content, str) or not content.strip():
         raise PermanentDeliveryError("approved delivery content is empty")
 
+    # Check the live binding BEFORE any approved/auto-eligible branch returns.
+    # dispatch_one holds BEGIN IMMEDIATE through adapter delivery and commit,
+    # so another writer cannot revoke the binding between this read and send.
+    authorised = connection.execute(
+        "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
+        (row["recipient_id"], property_id),
+    ).fetchone()
+    if authorised is None:
+        raise PermanentDeliveryError("recipient is no longer authorised for property")
+
     approval = connection.execute(
         "SELECT r.final_content,d.status FROM review r "
         "JOIN draft d ON d.draft_id=r.draft_id "
@@ -393,12 +409,6 @@ def _authorised_tenant_payload(
     if not approved and not auto_eligible_maintenance:
         raise PermanentDeliveryError("approved or eligible draft version could not be verified")
 
-    authorised = connection.execute(
-        "SELECT 1 FROM tenant_property WHERE tenant_id=? AND property_id=?",
-        (row["recipient_id"], property_id),
-    ).fetchone()
-    if authorised is None:
-        raise PermanentDeliveryError("recipient is no longer authorised for property")
     return payload
 
 

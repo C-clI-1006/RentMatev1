@@ -29,7 +29,13 @@ def test_all_team_route_families_are_mounted_together(tmp_path):
         with TestClient(app) as client:
             home = client.get("/", follow_redirects=False)
             assert home.status_code == 307
-            assert home.headers["location"] == "/demo"
+            assert home.headers["location"] == "/app"
+            business = client.get("/app")
+            assert business.status_code == 200
+            assert "Property workspace" in business.text
+            assert client.get("/app-assets/app.js").status_code == 200
+            assert client.get("/app-assets/api.js").status_code == 200
+            assert client.get("/app-assets/app.css").status_code == 200
             page = client.get("/demo")
             assert page.status_code == 200
             assert "UC4/UC5 scheduled detection" in page.text

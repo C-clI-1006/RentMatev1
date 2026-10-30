@@ -1,0 +1,10 @@
+{
+  "started_at": "2026-10-29T12:45:04.168Z",
+  "finished_at": "2026-10-29T12:45:04.304Z",
+  "http_status": 502,
+  "result": {
+    "detail": "Model unavailable or response failed validation. Check the address, model, key and VPN."
+  },
+  "live_inference_verified": false,
+  "credential_readback": false
+}

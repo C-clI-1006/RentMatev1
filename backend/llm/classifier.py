@@ -17,11 +17,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import json
+import logging
+import math
 import os
 import re
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+from .configuration import get_configuration
+
+logger = logging.getLogger(__name__)
 
 
 class Category(str, Enum):
@@ -118,9 +123,10 @@ class QwenClassifier(BaseClassifier):
 
     def __init__(self, *, base_url: str | None = None, api_key: str | None = None,
                  model: str | None = None):
-        self._base_url = (base_url or os.getenv("LLM_BASE_URL", "")).strip()
-        self._api_key = (api_key or os.getenv("LLM_API_KEY", "")).strip()
-        self._model = (model or os.getenv("LLM_MODEL", "")).strip()
+        configuration = get_configuration()
+        self._base_url = (base_url or configuration.base_url).strip()
+        self._api_key = (api_key or configuration.api_key).strip()
+        self._model = (model or configuration.model).strip()
 
     @property
     def configured(self) -> bool:
@@ -130,46 +136,70 @@ class QwenClassifier(BaseClassifier):
         if not self.configured:
             return None
         try:
-            with httpx.Client(
-                timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
-                trust_env=False,
-            ) as client:
-                response = client.post(
-                    self._base_url.rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + self._api_key},
-                    json={
-                        "model": self._model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Classify one tenant property-management message. "
-                                    "Return only JSON with category, confidence and optional note. "
-                                    "Allowed category values are maintenance, lease_rent, "
-                                    "smalltalk, and unknown. Map complaints or general enquiries "
-                                    "to maintenance/lease_rent only when their intent is clear; "
-                                    "otherwise use unknown. Do not decide identity, property "
-                                    "ownership, emergency status, approval, or delivery."
-                                ),
-                            },
-                            {"role": "user", "content": content},
-                        ],
-                        "temperature": 0,
-                        "max_completion_tokens": 160,
-                        "reasoning_effort": "none",
-                        "stream": False,
-                    },
-                )
-            response.raise_for_status()
-            raw = response.json()["choices"][0]["message"]["content"]
-            if not isinstance(raw, str) or not raw.strip():
-                return None
-            parsed = _QwenClassification.model_validate(json.loads(raw.strip()))
-            if parsed.confidence < 0.6:
-                return None
-            return Classification(parsed.category, parsed.confidence, parsed.note or "qwen")
-        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
-            # Never expose raw model responses, credentials, or tenant content.
+            timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError()
+        except ValueError:
+            logger.warning("Communication classification failed: code=configuration")
+            return None
+        # Retry only transient failures once. No message, draft or notification
+        # is created here, so retrying classification cannot duplicate intake.
+        for attempt, budget in enumerate((160, 320)):
+            retryable = False
+            try:
+                with httpx.Client(timeout=timeout, trust_env=False) as client:
+                    response = client.post(
+                        self._base_url.rstrip("/") + "/chat/completions",
+                        headers={"Authorization": "Bearer " + self._api_key},
+                        json={
+                            "model": self._model,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Classify one tenant property-management message. "
+                                        "Return only JSON with category, confidence and optional note. "
+                                        "Allowed category values are maintenance, lease_rent, "
+                                        "smalltalk, and unknown. Map complaints or general enquiries "
+                                        "to maintenance/lease_rent only when their intent is clear; "
+                                        "otherwise use unknown. Do not decide identity, property "
+                                        "ownership, emergency status, approval, or delivery."
+                                    ),
+                                },
+                                {"role": "user", "content": content},
+                            ],
+                            "temperature": 0,
+                            "max_completion_tokens": budget,
+                            "reasoning_effort": "none",
+                            "stream": False,
+                        },
+                    )
+                response.raise_for_status()
+                choice = response.json()["choices"][0]
+                raw = choice["message"]["content"]
+                if choice.get("finish_reason") == "length":
+                    code, retryable = "truncated_output", True
+                elif not isinstance(raw, str) or not raw.strip():
+                    code, retryable = "empty_content", True
+                else:
+                    parsed = _QwenClassification.model_validate(json.loads(raw.strip()))
+                    if parsed.confidence >= 0.6:
+                        return Classification(parsed.category, parsed.confidence, parsed.note or "qwen")
+                    code = "low_confidence"
+            except httpx.TimeoutException:
+                code, retryable = "timeout", True
+            except httpx.HTTPStatusError as error:
+                retryable = error.response.status_code == 429 or error.response.status_code >= 500
+                code = "unavailable" if retryable else "http_rejected"
+            except httpx.TransportError:
+                code, retryable = "unavailable", True
+            except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+                code = "invalid_response"
+            # Fixed diagnostic codes only: never log exceptions, credentials,
+            # tenant messages or raw model responses.
+            logger.warning("Communication classification failed: code=%s attempt=%s", code, attempt + 1)
+            if attempt == 0 and retryable:
+                continue
             return None
 
 

@@ -19,7 +19,7 @@ if (!(Test-Path -LiteralPath $python)) {
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the local demo environment' }
 }
 
-& $python -c 'import fastapi, uvicorn, pydantic, multipart, pypdf, pytest'
+& $python -c 'import fastapi, uvicorn, pydantic, multipart, pypdf, pytest; from zoneinfo import ZoneInfo; ZoneInfo("Australia/Sydney")'
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'Installing RentMate dependencies into the local demo environment...'
     & $python -m pip install -r (Join-Path $backendPath 'requirements.txt')
@@ -78,7 +78,8 @@ if ($Verify) {
 }
 
 Write-Host 'RentMate integrated local prototype'
-Write-Host 'Open: http://127.0.0.1:8020/demo'
+Write-Host 'Business portal: http://127.0.0.1:8020/app'
+Write-Host 'Technical verification: http://127.0.0.1:8020/demo'
 Write-Host 'API docs: http://127.0.0.1:8020/docs'
 Write-Host 'Demo tokens are pre-filled on the demo page. Ctrl+C stops the server.'
 & $python -m uvicorn main:app --host 127.0.0.1 --port 8020

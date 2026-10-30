@@ -13,6 +13,11 @@ if (!$LogPath) { $LogPath = Join-Path $PSScriptRoot '.runtime\monthly-report-run
 if ($StartTime -notmatch '^([01]\d|2[0-3]):[0-5]\d$') {
     throw 'StartTime must use 24-hour HH:mm format.'
 }
+# schtasks MONTHLY interprets StartTime using the Windows machine timezone.
+# Fail visibly rather than silently registering 02:00 in a different zone.
+if ((Get-TimeZone).Id -ne 'AUS Eastern Standard Time') {
+    throw 'Monthly reports require the Windows timezone AUS Eastern Standard Time (Australia/Sydney). Ask the machine administrator to configure it, then register again.'
+}
 
 $taskCommand = (
     "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$runner`" " +
@@ -23,4 +28,4 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows Task Scheduler registration failed.' }
 
 Write-Host "Registered '$TaskName' for day 1 of every month at $StartTime."
 Write-Host "Database: $DatabasePath"
-Write-Host "The task generates the previous calendar month and writes: $LogPath"
+Write-Host "Business timezone: Australia/Sydney. The task generates the previous calendar month and writes: $LogPath"

@@ -31,6 +31,10 @@ build/
 coverage/
 .runtime/
 .runtime-*/
+.playwright-cli/
+tmp/
+output/playwright/cli-artifacts/
+output/playwright/*-cli/
 
 # OS / editor
 .DS_Store

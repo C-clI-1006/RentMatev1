@@ -100,6 +100,20 @@ def test_reachable_source_with_no_records_is_empty(db):
     assert summary.lease.leases == []
 
 
+def test_lease_date_bounds_do_not_shift_to_previous_utc_day(db):
+    db.executescript("""
+        INSERT INTO lease (lease_id,property_id,tenant_id,start_date,end_date,created_at)
+        VALUES ('ends-september','property-1','tenant-1','2026-01-01','2026-09-30','2026-01-01'),
+               ('starts-last-october-day','property-1','tenant-1','2026-10-31','2027-01-01','2026-01-01'),
+               ('starts-november','property-1','tenant-1','2026-11-01','2027-01-01','2026-01-01');
+    """)
+    leases = _source(db).period_summary(PropertyId("property-1"), PERIOD).lease.leases
+    ids = {lease.lease_id for lease in leases}
+    assert "starts-last-october-day" in ids
+    assert "ends-september" not in ids
+    assert "starts-november" not in ids
+
+
 def test_partial_payment_never_creates_a_partial_status(db):
     db.execute(
         "UPDATE rent_record SET due_date = '2026-10-25' "
