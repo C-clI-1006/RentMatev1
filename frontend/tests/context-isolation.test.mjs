@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 
-const source=readFileSync(new URL('../app.js',import.meta.url),'utf8').replace(/^import .*?;\n/,'');
+const source=readFileSync(new URL('../app.js',import.meta.url),'utf8').replace(/^import .*?;\r?\n/,'');
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const view=id=>({request_id:id,title:'Property-P1 '+id,status:'assessed',priority:'routine',version:2,events:[]});
