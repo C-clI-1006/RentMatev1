@@ -31,7 +31,7 @@ function harness(respond) {
   }
   const context=vm.createContext({document,api:async(path,options)=>{calls.push({path,options});return respond(path,options);},
     FormData:Data,crypto:{randomUUID},confirm:()=>true,setTimeout,URL,console});
-  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory,documentReviewStatus,documentReviewForm};',context);
+  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory,documentReviewStatus,documentReviewForm,recordLinks,propertyTimeline};',context);
   const ui=context.ui;
   Object.assign(ui.state,{token:'manager-P1',property:'P1',role:'manager',scheduler:'ops-P1',epoch:1});
   function switchSession() {
@@ -116,6 +116,7 @@ const forms=[
   ['statusForm',{target_status:'approved',reason:'P1 approval',evidence_refs:''}],
   ['assessmentForm',{priority:'routine',rationale:'P1 assessment'}],
   ['evidenceReviewForm',{status:'select_category',category:'invoice'}],
+  ['evidenceLinkForm',{target:JSON.stringify({target_type:'lease',target_id:'P1-lease'})}],
   ['reviewForm',{final_content:'P1 final content',reason:'P1 decision'}],
   ['handoffForm',{resolution:'P1 handled offline'}],
   ['reportForm',{period:'2026-10',reason:'P1 monthly report'}],
@@ -252,4 +253,41 @@ test('guided workflow completes automatic classification without a manager decis
  assert.ok(html.includes('<li class="done"><div>Accept classification or resolve review'));
  assert.ok(html.includes('invoice · Not required'));
  assert.ok(!html.includes('Manager settles the category'));
+});
+
+test('property evidence history remains visible without a Maintenance API response',async()=>{
+  const h=harness(path=>path.includes('/evidence/timeline')?[{kind:'uploaded',filename:'<img src=x>',occurred_at:'2026-10-30T00:00:00Z',document_id:'doc-1',actor:'manager:P1'}]:Promise.reject(new Error('Maintenance unavailable')));
+  await h.ui.render('activity');
+  const html=h.nodes.get('content').innerHTML;
+  assert.ok(html.includes('Property evidence timeline') && html.includes('&lt;img src=x&gt;'));
+  assert.ok(html.includes('Open document'));
+  assert.ok(!html.includes('<img src=x>'));
+});
+
+test('record choices and link history are escaped and remain scoped',async()=>{
+  const h=harness(path=>path.includes('/link-targets')?[{target_type:'lease',target_id:'lease-1',label:'<script>label</script>'}]:[]);
+  h.ui.state.selectedDocument={document_id:'doc-1',classification:'classified',machine_category:'invoice',review_required:false};
+  await h.ui.recordLinks('doc-1');
+  const html=h.nodes.get('documentLinks').innerHTML;
+  assert.ok(html.includes('Unlinked') && html.includes('Link document'));
+  assert.ok(html.includes('&lt;script&gt;label&lt;/script&gt;'));
+  assert.ok(!html.includes('<script>label</script>'));
+  assert.ok(h.calls.every(c=>c.path.includes('property_id=P1')));
+});
+
+test('a delayed link panel cannot show old-property record choices after session change',async()=>{
+  const late=deferred();const h=harness(path=>path.includes('/evidence/')?late.promise:[]);
+  h.ui.state.selectedDocument={document_id:'doc-1'};
+  const pending=h.ui.recordLinks('doc-1');const rejected=assert.rejects(pending,e=>e.stale===true);
+  h.switchSession();await flush();late.resolve([]);await rejected;
+  assert.ok(!h.nodes.has('documentLinks'));
+  assert.equal(h.ui.state.selectedDocument,null);
+});
+
+test('uncertain documents cannot display the manual association form',async()=>{
+  const h=harness(()=>[]);
+  h.ui.state.selectedDocument={document_id:'doc-1',classification:'failed',review_required:true};
+  await h.ui.recordLinks('doc-1');
+  assert.ok(h.nodes.get('documentLinks').innerHTML.includes('Complete classification review'));
+  assert.ok(!h.nodes.get('documentLinks').innerHTML.includes('evidenceLinkForm'));
 });

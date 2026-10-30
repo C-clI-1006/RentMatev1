@@ -323,8 +323,23 @@ def test_v3_database_upgrade_and_idempotency(tmp_path):
     for _ in range(2):
         upgraded = init_connection(path)
         try:
-            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 11
+            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 12
             assert upgraded.execute("SELECT count(*) FROM evidence_event_receipt").fetchone()[0] == 0
             assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:
             upgraded.close()
+
+
+def test_property_timeline_projects_received_events_without_duplicate_replays(integrated):
+    _, _, manager, evidence, rid, doc, payload = integrated
+    assert evidence.receive_maintenance_event(payload, manager.auth)
+    assert evidence.receive_maintenance_event(payload, manager.auth)
+    rows = evidence.property_evidence.timeline("p1", manager.auth, doc)
+    received = [r for r in rows if r["kind"] == "maintenance_event"]
+    assert len(received) == 1
+    assert received[0]["event_id"] == payload["event_id"]
+    assert received[0]["target_id"] == rid
+    assert received[0]["actor"] == payload["actor"]
+    assert received[0]["received_by"] == "m1"
+    links = evidence.property_evidence.links(doc, "p1", manager.auth)
+    assert links[0]["source"] == "maintenance_event" and links[0]["target_id"] == rid

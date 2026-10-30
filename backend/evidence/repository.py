@@ -92,7 +92,7 @@ def _review_flags_from_details(
 
 class EvidenceRepository:
     """Owns the evidence_document / evidence_classification /
-    evidence_association tables (this increment uses the first two)."""
+    evidence_association tables; property history and links share this connection."""
 
     def __init__(self, db_path: str, storage_root: str) -> None:
         self._db_path = db_path
@@ -357,6 +357,7 @@ class EvidenceRepository:
                            COALESCE(c.status, 'pending') AS classification_status,
                            CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
                                WHERE ed.document_id=d.document_id)
+                           OR EXISTS (SELECT 1 FROM evidence_association a WHERE a.document_id=d.document_id AND a.status='associated')
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                            d.created_at AS uploaded_at,
                            c.classification_type AS machine_category,
@@ -408,6 +409,7 @@ class EvidenceRepository:
                        COALESCE(c.status, 'pending') AS classification_status,
                        CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
                                WHERE ed.document_id=d.document_id)
+                           OR EXISTS (SELECT 1 FROM evidence_association a WHERE a.document_id=d.document_id AND a.status='associated')
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
                        c.classification_type AS machine_category,
@@ -451,6 +453,7 @@ class EvidenceRepository:
                        COALESCE(c.status, 'pending') AS classification_status,
                        CASE WHEN EXISTS (SELECT 1 FROM evidence_event_document ed
                                WHERE ed.document_id=d.document_id)
+                           OR EXISTS (SELECT 1 FROM evidence_association a WHERE a.document_id=d.document_id AND a.status='associated')
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
                        c.classification_type AS machine_category,

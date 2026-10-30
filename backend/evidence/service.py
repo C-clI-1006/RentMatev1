@@ -64,6 +64,7 @@ from .extract import extract_pdf_text
 from .repository import EvidenceRepository, EvidenceReviewRejectedError
 from .upload import remove_document, save_document, validate_upload
 from .maintenance import MaintenanceEvidenceReceiver
+from .property_timeline import PropertyEvidence
 
 
 # Stable, human-readable reasons for the extractor's manual-review codes
@@ -116,6 +117,7 @@ class EvidenceService:
         # to a stub. Tests may inject a labelled stub explicitly.
         self._classifier = classifier if classifier is not None else build_document_classifier()
         self.maintenance_events = MaintenanceEvidenceReceiver(repo)
+        self.property_evidence = PropertyEvidence(repo)
 
     def validate_references(self, evidence_refs, property_id, auth):
         return self.maintenance_events.validate(evidence_refs, property_id, auth)

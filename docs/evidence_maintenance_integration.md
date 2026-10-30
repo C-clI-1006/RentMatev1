@@ -129,7 +129,7 @@ Maintenance workflow. After a status change, query the existing manager-only
 GET /api/evidence/maintenance-timeline with the request_id and property_id. Poll until
 the event appears, then query its receipt and the linked document. No manual dispatch
 call is needed when background dispatch is configured and bindings are valid.
-This remains a Maintenance event timeline, not a general graphical property timeline.
+This endpoint remains a Maintenance event timeline. The separate [property evidence timeline](evidence_property_timeline.md) also projects upload, classification, review and manual record-link history.
 
 New application wiring is in backend/main.py and Start-RentMate.ps1; dispatch and
 recovery logic is in backend/evidence/dispatch.py. No Maintenance-owned sender or

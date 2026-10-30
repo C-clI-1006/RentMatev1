@@ -44,12 +44,13 @@ import hmac
 import json
 import os
 import sqlite3
+from typing import Literal
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from contracts.evidence import (
     EvidenceReviewCommand,
@@ -63,6 +64,7 @@ from .repository import EvidenceReviewRejectedError
 from .service import EvidenceScopeError, EvidenceService
 from .upload import MAX_FILE_BYTES
 from .maintenance import EvidenceReferenceError
+from .property_timeline import EvidenceLinkError
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 bearer = HTTPBearer()
@@ -136,6 +138,8 @@ class EvidenceReferencesBody(BaseModel):
 def _integration_call(operation, *args):
     try:
         return operation(*args)
+    except EvidenceLinkError as error:
+        raise HTTPException(error.status, detail={"code": error.code}) from None
     except PermissionError:
         raise HTTPException(403, detail={"code": "forbidden"}) from None
     except EvidenceReferenceError:
@@ -169,6 +173,51 @@ def maintenance_event_timeline(
     service: Annotated[EvidenceService, Depends(get_evidence_service)],
 ):
     return _integration_call(service.maintenance_timeline, request_id, property_id, auth)
+
+
+class EvidenceLinkBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    property_id: str = Field(min_length=1, max_length=200)
+    target_type: Literal["lease", "maintenance_request"]
+    target_id: str = Field(min_length=1, max_length=200)
+
+
+@router.get("/timeline")
+def property_evidence_timeline(
+    property_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+    document_id: str | None = None,
+):
+    return _integration_call(service.property_evidence.timeline, property_id, auth, document_id)
+
+
+@router.get("/link-targets")
+def evidence_link_targets(
+    property_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.property_evidence.targets, property_id, auth)
+
+
+@router.get("/documents/{document_id}/links")
+def document_record_links(
+    document_id: str, property_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.property_evidence.links, document_id, property_id, auth)
+
+
+@router.post("/documents/{document_id}/links")
+def link_document_record(
+    document_id: str, body: EvidenceLinkBody,
+    auth: Annotated[AuthContext, Depends(get_auth)],
+    service: Annotated[EvidenceService, Depends(get_evidence_service)],
+):
+    return _integration_call(service.property_evidence.link, document_id, body.property_id,
+                             body.target_type, body.target_id, auth)
 
 
 @router.post("/documents")
