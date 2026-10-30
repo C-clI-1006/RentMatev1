@@ -389,6 +389,7 @@ def test_live_upload_details_are_not_leaked(client, monkeypatch):
     ref = next(ref for ref in r.json() if ref["document_id"] == doc["document_id"])
     # the persisted review fields come back correctly (list)
     assert ref["review_required"] is True
+    assert ref["machine_category"] is None
     assert ref["review_code"] == "configuration"
     assert isinstance(ref["review_reason"], str) and ref["review_reason"]
     # only the three review fields are exposed, and the key is NOT `details`
@@ -400,6 +401,7 @@ def test_live_upload_details_are_not_leaked(client, monkeypatch):
         "size_bytes",
         "upload_status",
         "classification",
+        "machine_category",
         "association",
         "uploaded_at",
         "review_required",

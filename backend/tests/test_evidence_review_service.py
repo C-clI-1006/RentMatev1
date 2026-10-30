@@ -721,3 +721,46 @@ def test_duplicate_review_is_idempotent_single_record(tmp_path):
             check.close()
     finally:
         repo.close()
+
+
+def test_upload_category_visible_before_review_and_preserved_after_correction(tmp_path):
+    from contracts.evidence import EvidenceUploadCommand
+    service, repo = _make_service(tmp_path, "category-visibility")
+    tenant = AuthContext(tenant_id=TENANT_1, property_id=PROP_1)
+    manager = AuthContext(tenant_id=None, property_id=PROP_1, manager_id=MANAGER_9)
+    sample = Path(__file__).resolve().parents[2] / "demo/samples/test-invoice.pdf"
+    try:
+        result = service.upload(EvidenceUploadCommand(property_id=PROP_1,
+            original_filename="invoice.pdf", content=sample.read_bytes()), tenant)
+        doc = result.document
+        assert doc.machine_category == "invoice"
+        assert doc.review_required is False
+        assert doc.final_category is None and doc.reviewed_by is None
+        assert service.get_document(doc.document_id, PROP_1, tenant).machine_category == "invoice"
+        assert service.get_document(doc.document_id, PROP_1, manager).machine_category == "invoice"
+        for auth in (tenant, manager):
+            assert next(d for d in service.list_documents(PROP_1, auth)
+                        if d.document_id == doc.document_id).machine_category == "invoice"
+        service.review(ReviewSelectCategory(document_id=doc.document_id, property_id=PROP_1,
+            category=DocumentCategory.LEASE_DOCUMENT), manager)
+        reviewed = service.get_document(doc.document_id, PROP_1, manager)
+        assert reviewed.machine_category == "invoice"
+        assert reviewed.final_category == "lease_document"
+        assert reviewed.reviewed_by == MANAGER_9
+        with pytest.raises(EvidenceScopeError):
+            service.get_document(doc.document_id, "another-property", tenant)
+    finally:
+        repo.close()
+
+
+@pytest.mark.parametrize("status,category", [("failed", "invoice"), ("classified", "unknown")])
+def test_unusable_machine_category_does_not_become_display_category(tmp_path, status, category):
+    service, repo = _make_service(tmp_path, "unusable-category", status=status, classification_type=category)
+    try:
+        doc = service.get_document("unusable-category", PROP_1,
+            AuthContext(tenant_id=TENANT_1, property_id=PROP_1))
+        assert doc.machine_category is None
+        assert doc.final_category is None
+        assert doc.review_required is True
+    finally:
+        repo.close()

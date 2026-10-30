@@ -159,6 +159,8 @@ class EvidenceDocument(BaseModel):
     size_bytes: int = Field(ge=0)
     upload_status: UploadStatus
     classification: ClassificationStatus
+    # Persisted machine result; separate from the human review decision.
+    machine_category: DocumentCategory | None = None
     association: AssociationStatus
     storage_ref: str  # storage reference to the original file
     uploaded_at: datetime  # UTC
@@ -189,6 +191,8 @@ class EvidenceDocumentRef(BaseModel):
     size_bytes: int = Field(ge=0)
     upload_status: UploadStatus
     classification: ClassificationStatus
+    # Persisted machine result; separate from the human review decision.
+    machine_category: DocumentCategory | None = None
     association: AssociationStatus
     uploaded_at: datetime  # UTC
     # Persisted manual-review flag for the classification outcome.

@@ -348,6 +348,7 @@ class EvidenceService:
             classified_at=utcnow().isoformat(),
         )
         if advanced:
+            doc.machine_category = DocumentCategory(classification_type) if status == "classified" else None
             doc.classification = (
                 ClassificationStatus.CLASSIFIED
                 if status == "classified"

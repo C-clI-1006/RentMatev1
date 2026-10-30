@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from contracts.common import ManagerId, PropertyId
-from contracts.evidence import EvidenceDocument, EvidenceDocumentRef
+from contracts.evidence import DocumentCategory, EvidenceDocument, EvidenceDocumentRef
 from permissions import (
     MissingManagerIdentityError,
     SQLiteManagerRepository,
@@ -32,6 +32,15 @@ from permissions import (
 )
 from shared import new_id, utcnow
 from shared.sqlite import apply_schema
+
+
+def _machine_category(row):
+    if row["classification_status"] != "classified":
+        return None
+    try:
+        return DocumentCategory(row["machine_category"])
+    except (ValueError, TypeError):
+        return None
 
 
 class EvidenceReviewRejectedError(ValueError):
@@ -341,7 +350,7 @@ class EvidenceRepository:
                 """
                 SELECT document_id, original_filename, file_type, size_bytes,
                        upload_status, classification_status, association_status,
-                       uploaded_at, classification_details
+                       uploaded_at, classification_details, machine_category
                 FROM (
                     SELECT d.document_id, d.original_filename, d.file_type,
                            d.size_bytes, d.upload_status,
@@ -350,6 +359,7 @@ class EvidenceRepository:
                                WHERE ed.document_id=d.document_id)
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                            d.created_at AS uploaded_at,
+                           c.classification_type AS machine_category,
                            c.details AS classification_details,
                            d.rowid AS insertion_rowid
                     FROM evidence_document d
@@ -368,6 +378,7 @@ class EvidenceRepository:
                     size_bytes=r["size_bytes"],
                     upload_status=r["upload_status"],
                     classification=r["classification_status"],
+                    machine_category=_machine_category(r),
                     association=r["association_status"],
                     uploaded_at=_parse_dt(r["uploaded_at"]),
                     **_review_flags_from_details(r["classification_details"]),
@@ -399,7 +410,8 @@ class EvidenceRepository:
                                WHERE ed.document_id=d.document_id)
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
-                       c.details AS classification_details
+                       c.classification_type AS machine_category,
+                           c.details AS classification_details
                 FROM evidence_document d
                 LEFT JOIN evidence_classification c ON c.document_id = d.document_id
                 WHERE d.document_id = ? AND d.tenant_id IS ? AND d.property_id = ?
@@ -441,7 +453,8 @@ class EvidenceRepository:
                                WHERE ed.document_id=d.document_id)
                                 THEN 'associated' ELSE 'unassociated' END AS association_status,
                        d.created_at AS uploaded_at, d.updated_at,
-                       c.details AS classification_details
+                       c.classification_type AS machine_category,
+                           c.details AS classification_details
                 FROM evidence_document d
                 LEFT JOIN evidence_classification c ON c.document_id = d.document_id
                 WHERE d.document_id = ? AND d.property_id = ?
@@ -471,6 +484,7 @@ class EvidenceRepository:
             storage_ref=row["storage_ref"],
             upload_status=row["upload_status"],
             classification=row["classification_status"],
+            machine_category=_machine_category(row),
             association=row["association_status"],
             uploaded_at=_parse_dt(row["uploaded_at"]),
             updated_at=_parse_dt(row["updated_at"]),
