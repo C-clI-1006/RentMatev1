@@ -31,7 +31,7 @@ function harness(respond) {
   }
   const context=vm.createContext({document,api:async(path,options)=>{calls.push({path,options});return respond(path,options);},
     FormData:Data,crypto:{randomUUID},confirm:()=>true,setTimeout,URL,console});
-  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction};',context);
+  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory};',context);
   const ui=context.ui;
   Object.assign(ui.state,{token:'manager-P1',property:'P1',role:'manager',scheduler:'ops-P1',epoch:1});
   function switchSession() {
@@ -165,4 +165,13 @@ test('a current operations callback still refreshes and reports real counts',asy
   await h.listeners.click({target:{closest:selector=>selector==='[data-action]'?b:null}});
   assert.equal(h.ui.state.operations.length,1);
   assert.ok(h.nodes.get('feedback').innerHTML.includes('drafts_created'));
+});
+
+
+test('automatic category is visible before optional manager review',()=>{
+ const {ui}=harness(()=>[]);
+ assert.equal(ui.documentCategory({classification:'classified',review_required:false,machine_category:'invoice',final_category:null}), 'invoice');
+ assert.equal(ui.documentCategory({classification:'classified',review_required:false,machine_category:'invoice',final_category:'lease_document'}), 'lease_document');
+ assert.equal(ui.documentCategory({classification:'failed',review_required:true,machine_category:null}), 'Manual review required');
+ assert.equal(ui.documentCategory({classification:'classified',review_required:null,machine_category:'invoice'}), 'Not available');
 });

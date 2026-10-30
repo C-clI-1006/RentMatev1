@@ -536,3 +536,34 @@ def test_rejection_runs_before_any_io(tmp_path):
         assert check.execute("SELECT COUNT(*) FROM evidence_document").fetchone()[0] == 0
     finally:
         check.close()
+
+
+def test_machine_category_available_without_manager_review(client):
+    sample = Path(__file__).resolve().parents[2] / "demo/samples/test-invoice.pdf"
+    response = _upload(client, "invoice.pdf", sample.read_bytes(), HEADERS_T1_P1, PROP_1)
+    assert response.status_code == 200
+    doc = response.json()["document"]
+    assert doc["classification"] == "classified"
+    assert doc["machine_category"] == "invoice"
+    assert doc["review_required"] is False
+    assert doc["final_category"] is None
+    assert doc["reviewed_by"] is None
+    detail = client.get(f"/api/evidence/documents/{doc['document_id']}",
+                        params={"property_id": PROP_1}, headers=HEADERS_T1_P1)
+    assert detail.status_code == 200
+    assert detail.json()["machine_category"] == "invoice"
+    listing = client.get("/api/evidence/documents", params={"property_id": PROP_1}, headers=HEADERS_T1_P1)
+    assert listing.status_code == 200
+    assert listing.json()[0]["machine_category"] == "invoice"
+    forbidden = client.get(f"/api/evidence/documents/{doc['document_id']}",
+                           params={"property_id": PROP_1}, headers=HEADERS_T2_P2)
+    assert forbidden.status_code == 403
+
+
+def test_failed_classification_has_no_automatic_category(client):
+    response = _upload(client, "broken.pdf", b"not a PDF", HEADERS_T1_P1, PROP_1)
+    doc = response.json()["document"]
+    assert doc["classification"] == "failed"
+    assert doc["machine_category"] is None
+    assert doc["review_required"] is True
+    assert doc["final_category"] is None
