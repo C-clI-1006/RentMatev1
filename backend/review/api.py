@@ -7,7 +7,7 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -31,6 +31,7 @@ from review.service import (
 )
 from shared import AuthContext
 from shared.sqlite import init_connection
+from .handoffs import HandoffCase, HandoffService
 
 router = APIRouter(prefix="/api/reviews", tags=["Manager Review"])
 bearer = HTTPBearer()
@@ -99,6 +100,45 @@ class DecisionBody(BaseModel):
     decision: ReviewDecision
     final_content: str | None = None
     reason: str | None = None
+
+
+class HandoffResolutionBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    outcome: Literal['resolved', 'dismissed']
+    resolution: str = Field(min_length=1, max_length=2000)
+
+
+def get_handoffs(
+    connection: Annotated[sqlite3.Connection, Depends(get_connection)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
+) -> HandoffService:
+    return HandoffService(connection, auth)
+
+
+@router.get('/handoffs', response_model=list[HandoffCase])
+def list_handoffs(service: Annotated[HandoffService, Depends(get_handoffs)]):
+    return service.list_cases()
+
+
+@router.get('/handoffs/{case_id}', response_model=HandoffCase)
+def get_handoff(case_id: str, service: Annotated[HandoffService, Depends(get_handoffs)]):
+    try:
+        return service.get_case(case_id)
+    except ReviewNotFoundError:
+        raise HTTPException(404, 'Handoff case not found')
+
+
+@router.post('/handoffs/{case_id}/resolution', response_model=HandoffCase)
+def resolve_handoff(case_id: str, body: HandoffResolutionBody,
+                    service: Annotated[HandoffService, Depends(get_handoffs)]):
+    try:
+        return service.settle(case_id, **body.model_dump())
+    except ReviewNotFoundError:
+        raise HTTPException(404, 'Handoff case not found')
+    except ReviewConflictError as error:
+        raise HTTPException(409, str(error))
+    except InvalidReviewDecisionError as error:
+        raise HTTPException(422, str(error))
 
 
 @router.get("", response_model=list[ReviewQueueItem])

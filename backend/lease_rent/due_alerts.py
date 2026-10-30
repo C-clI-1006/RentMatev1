@@ -132,6 +132,7 @@ class SQLiteScheduledDraftWriter:
             review_reason="scheduled lease-deadline alert (UC5)",
             tenant_id=scope.tenant_id,
             property_id=scope.property_id,
+            remaining_days=candidate.remaining_days,
         )
         return draft_created, alert_created
 
@@ -142,6 +143,7 @@ class SQLiteScheduledDraftWriter:
         review_reason: str,
         tenant_id: str,
         property_id: str,
+        remaining_days: int | None = None,
     ) -> bool:
         cursor = self._connection.execute(
             "INSERT OR IGNORE INTO draft "
@@ -179,6 +181,14 @@ class SQLiteScheduledDraftWriter:
                 )
             return False
 
+        reference = draft.source_facts[0]
+        basis = {
+            "facts": self._repository.reminder_facts(
+                source_type=reference.source_type, source_id=str(reference.source_id)),
+            "remaining_days": remaining_days,
+        }
+        self._connection.execute("INSERT INTO reminder_basis(draft_id,basis) VALUES (?,?)",
+                                 (draft.draft_id, json.dumps(basis, sort_keys=True)))
         self._connection.execute(
             "INSERT INTO audit "
             "(audit_id,actor,action,subject_type,subject_id,event_id,details,at) "

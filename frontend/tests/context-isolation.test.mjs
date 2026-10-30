@@ -42,6 +42,36 @@ function harness(respond) {
   return {ui,nodes,document,listeners,calls,switchSession};
 }
 
+test('Review Centre separates escaped handoff cases from reply approvals',async()=>{
+  const h=harness(path=>path==='/api/reviews/handoffs'?[{case_id:'case-1',message_id:'message-1',status:'open',
+    original_message:'<script>untrusted</script>',reason:'classifier unavailable'}]:[]);
+  await h.ui.render('reviews');
+  const html=h.nodes.get('content').innerHTML;
+  assert.ok(html.includes('Human handoffs'));
+  assert.ok(html.includes('&lt;script&gt;untrusted&lt;/script&gt;'));
+  assert.ok(!html.includes('<script>untrusted'));
+  assert.ok(html.includes('Resolve case') && html.includes('Dismiss case'));
+  assert.ok(html.includes('does not approve or send a reply'));
+  assert.ok(!html.includes('Approve exact version'));
+});
+
+test('handoff submission is single-flight and uses the scoped resolution API',async()=>{
+  const late=deferred(); const h=harness((path,options)=>options.method==='POST'?late.promise:[]);
+  const control={value:'resolved',disabled:false};
+  const form={id:'',dataset:{id:'case-1'},fields:{resolution:'Handled offline'},
+    classList:{contains:name=>name==='handoffForm'},querySelectorAll:()=>[control]};
+  const event={target:form,submitter:control,preventDefault(){}};
+  const pending=h.listeners.submit(event);
+  await h.listeners.submit(event);
+  assert.equal(h.calls.filter(c=>c.options.method==='POST').length,1);
+  const call=h.calls.find(c=>c.options.method==='POST');
+  assert.equal(call.path,'/api/reviews/handoffs/case-1/resolution');
+  assert.equal(call.options.body.outcome,'resolved');
+  assert.equal(call.options.body.resolution,'Handled offline');
+  late.resolve({status:'resolved'});await pending;
+  assert.ok(h.nodes.get('feedback').innerHTML.includes('No reply was approved or sent'));
+});
+
 for(const handler of ['requestDetail','documentDetail','reportDetail','timeline']) {
   test('delayed '+handler+' cannot restore P1 data after switching to P2 tenant',async()=>{
     const late=deferred();const h=harness(path=>path.includes('/P1-record')?late.promise:[]);
@@ -87,15 +117,16 @@ const forms=[
   ['assessmentForm',{priority:'routine',rationale:'P1 assessment'}],
   ['evidenceReviewForm',{status:'select_category',category:'invoice'}],
   ['reviewForm',{final_content:'P1 final content',reason:'P1 decision'}],
+  ['handoffForm',{resolution:'P1 handled offline'}],
   ['reportForm',{period:'2026-10',reason:'P1 monthly report'}],
 ];
 for(const [id,fields] of forms) {
   test('delayed '+id+' result cannot mutate or navigate the new session',async()=>{
     const late=deferred();const h=harness((path,options)=>options.method==='POST'?late.promise:[]);
     h.ui.state.selectedRequest=view('P1-request');h.ui.state.selectedDocument={document_id:'P1-document'};
-    const control={value:id==='reportForm'?'generate':'approved',disabled:false};let resets=0;
+    const control={value:id==='reportForm'?'generate':id==='handoffForm'?'resolved':'approved',disabled:false};let resets=0;
     const form={id,dataset:{id:'P1-draft',version:'1'},fields,elements:{file:{files:['test-file']}},
-      classList:{contains:name=>id==='reviewForm'&&name==='reviewForm'},querySelectorAll:()=>[control],reset(){resets++;}};
+      classList:{contains:name=>['reviewForm','handoffForm'].includes(id)&&name===id},querySelectorAll:()=>[control],reset(){resets++;}};
     const pending=h.listeners.submit({target:form,submitter:control,preventDefault(){}});
     h.switchSession();await flush();
     late.resolve({status:'registered',request_id:'P1-request',document:{document_id:'P1-document'},

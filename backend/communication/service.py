@@ -159,7 +159,10 @@ class CommunicationService:
         emergency = policy.has_emergency_indicator(content, self._emergency_terms)
         # Persist before any external call, including manager notification.
         self._store_message(message_id, auth, content,
-                            raw.category.value if raw else "unknown", now)
+                            raw.category.value if raw else "unknown", now,
+                            handoff_reason=("classifier output invalid or unavailable" if raw is None
+                                            else "classification unclear (unknown)" if raw.category is Category.UNKNOWN
+                                            else None))
         alert = self._attempt_emergency_alert(auth, message_id) if emergency else None
 
         if raw is None:
@@ -320,6 +323,8 @@ class CommunicationService:
         fact_result: LeaseRentFactResult | None = None,
     ) -> CommunicationOutcome:
         self._audit("communication.handoff", message_id, {"reason": reason})
+        from review.handoffs import record_handoff
+        record_handoff(self._conn, message_id, reason)
         return CommunicationOutcome(
             message_id=message_id,
             category=category,
@@ -363,16 +368,27 @@ class CommunicationService:
     def _store_message(
         self, message_id: MessageId, auth: AuthContext, content: str,
         message_type: str, now,
+        handoff_reason: str | None = None,
     ) -> None:
-        self._conn.execute(
-            "INSERT INTO message (message_id, tenant_id, property_id, content, "
-            "message_type, sentiment, received_at) VALUES (?, ?, ?, ?, ?, 'none', ?)",
-            (
-                message_id, auth.tenant_id, auth.property_id, content,
-                message_type, now.isoformat().replace("+00:00", "Z"),
-            ),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                "INSERT INTO message (message_id, tenant_id, property_id, content, "
+                "message_type, sentiment, received_at) VALUES (?, ?, ?, ?, ?, 'none', ?)",
+                (
+                    message_id, auth.tenant_id, auth.property_id, content,
+                    message_type, now.isoformat().replace("+00:00", "Z"),
+                ),
+            )
+            if handoff_reason:
+                # Message, case and creation audit commit together: a restart
+                # cannot leave a classification failure without a human item.
+                from review.handoffs import record_handoff
+                record_handoff(self._conn, message_id, handoff_reason)
+            else:
+                self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def _draft_reply(
         self,

@@ -409,6 +409,17 @@ def _authorised_tenant_payload(
     if not approved and not auto_eligible_maintenance:
         raise PermanentDeliveryError("approved or eligible draft version could not be verified")
 
+    # Scheduled reminders carry an immutable source basis. Validate live facts
+    # under the same transaction as delivery; maintenance paths are unaffected.
+    from lease_rent.relevance import ObsoleteReminder, validate_reminder
+    try:
+        validate_reminder(connection, draft_id, tenant_id=row['recipient_id'],
+                          property_id=property_id, as_of=utcnow().date())
+    except ObsoleteReminder as error:
+        raise PermanentDeliveryError(str(error)) from None
+    except sqlite3.DatabaseError:
+        raise RetryableDeliveryError('reminder_facts_temporarily_unavailable') from None
+
     return payload
 
 

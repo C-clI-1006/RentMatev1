@@ -323,7 +323,7 @@ def test_v3_database_upgrade_and_idempotency(tmp_path):
     for _ in range(2):
         upgraded = init_connection(path)
         try:
-            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 10
+            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 11
             assert upgraded.execute("SELECT count(*) FROM evidence_event_receipt").fetchone()[0] == 0
             assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:

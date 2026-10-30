@@ -36,7 +36,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 # Bump by one each time a migration step is appended below. Fresh databases
 # jump straight to this value; pre-existing databases climb up to it.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _TENANT_INBOX_DDL = """
 CREATE TABLE IF NOT EXISTS tenant_inbox (
@@ -387,6 +387,35 @@ def _ensure_v10_manager_evidence(conn: Connection) -> None:
         conn.execute(f"PRAGMA foreign_keys={foreign_keys}")
 
 
+def _ensure_v11_handoffs_and_reminder_basis(conn: Connection) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS reminder_basis ("
+                 "draft_id TEXT PRIMARY KEY REFERENCES draft(draft_id) ON DELETE CASCADE,basis TEXT NOT NULL)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS communication_handoff (
+        case_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL UNIQUE REFERENCES message(message_id),
+        property_id TEXT NOT NULL REFERENCES property(property_id),
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved','dismissed')),
+        created_at TEXT NOT NULL,
+        resolver_id TEXT REFERENCES manager(manager_id),
+        resolution TEXT,
+        resolved_at TEXT,
+        CHECK ((status='open' AND resolver_id IS NULL AND resolution IS NULL AND resolved_at IS NULL)
+            OR (status!='open' AND resolver_id IS NOT NULL AND resolution IS NOT NULL AND resolved_at IS NOT NULL))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_handoff_property "
+                 "ON communication_handoff(property_id,status,created_at)")
+    # Recover previously audited handoffs without inventing a classification.
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if {'message', 'audit'} <= tables:
+        conn.execute("""INSERT OR IGNORE INTO communication_handoff
+            (case_id,message_id,property_id,reason,created_at)
+            SELECT lower(hex(randomblob(16))),m.message_id,m.property_id,'legacy_handoff',MIN(a.at)
+            FROM message m JOIN audit a ON a.subject_id=m.message_id
+            WHERE a.action IN ('message.classified_invalid','communication.handoff')
+            GROUP BY m.message_id,m.property_id""")
+
+
 # Ordered, 1-based. ``user_version`` is the highest step already applied.
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _ensure_manager_tables,
@@ -398,6 +427,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     8: _ensure_v8_communication_maintenance_receipts,
     9: _ensure_v9_manager_inbox,
     10: _ensure_v10_manager_evidence,
+    11: _ensure_v11_handoffs_and_reminder_basis,
 }
 
 
