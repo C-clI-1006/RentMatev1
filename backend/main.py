@@ -157,10 +157,28 @@ def assess_lease_rent_risks(request: Request) -> dict:
         for row in connection.execute(
             "SELECT lease_id,start_date,end_date FROM lease WHERE end_date IS NOT NULL"
         ).fetchall():
-            risk = assess_lease_risk(
-                LeaseDeadlineInput(str(row[0]), date.fromisoformat(row[1]), date.fromisoformat(row[2])),
-                as_of=today, reminder_window_days=30,
-            )
+            source_id = str(row[0])
+            try:
+                risk = assess_lease_risk(
+                    LeaseDeadlineInput(
+                        source_id,
+                        date.fromisoformat(row[1]),
+                        date.fromisoformat(row[2]),
+                    ),
+                    as_of=today, reminder_window_days=30,
+                )
+            except (TypeError, ValueError):
+                results.append({
+                    "risk": None,
+                    "source": {"source_type": "lease", "source_id": source_id},
+                    "assessment": {
+                        "recommendation": None,
+                        "source": "fallback",
+                        "failure_code": "incomplete_authoritative_facts",
+                    },
+                    "requires_manager_review": True,
+                })
+                continue
             if risk:
                 result = LeaseRentRiskAdvisor().assess(
                     risk, verified_facts=[{"source_id": risk.source_id, "end_date": row[2]}]

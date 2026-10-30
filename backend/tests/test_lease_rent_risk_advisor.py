@@ -1,6 +1,9 @@
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from contextlib import closing
+
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -18,6 +21,84 @@ from llm.configuration import ModelConfiguration, set_configuration
 from main import create_app
 from scripts.seed_integrated_demo import seed
 from shared.sqlite import init_connection
+from lease_rent.risk_advisor import RiskAssessmentResult
+
+
+@pytest.mark.parametrize("start,end", [
+    ("2026-01-01", "2020-01-01"),
+    ("invalid-date", "2026-12-31"),
+    ("2026-01-01", "invalid-date"),
+    ("", "2026-12-31"),
+    ("2026-01-01", ""),
+])
+def test_risk_endpoint_isolates_invalid_lease_facts(tmp_path, monkeypatch, start, end):
+    database = tmp_path / "lease-risk.db"
+    seed(database)
+    with closing(init_connection(database)) as db:
+        db.execute(
+            "INSERT INTO lease(lease_id,property_id,tenant_id,start_date,end_date,created_at) "
+            "VALUES ('bad-lease','demo-property','demo-tenant',?,?,?)",
+            (start, end, "2026-10-30T00:00:00Z"),
+        )
+        db.commit()
+        original = [tuple(row) for row in db.execute("SELECT * FROM lease ORDER BY lease_id")]
+    calls = []
+
+    def advise(self, risk, **kwargs):
+        calls.append(risk.source_id)
+        return RiskAssessmentResult(source="fallback", failure_code="explicit_test_stub")
+
+    monkeypatch.setattr(LeaseRentRiskAdvisor, "assess", advise)
+    monkeypatch.setenv("RENTMATE_SCHEDULER_TOKEN", "scheduler-fixture")
+    app = create_app(str(database), str(tmp_path / "uploads"))
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            assert client.post("/api/ops/lease-rent/risk-assessment").status_code == 401
+            response = client.post(
+                "/api/ops/lease-rent/risk-assessment",
+                headers={"Authorization": "Bearer scheduler-fixture"},
+            )
+        assert response.status_code == 200
+        results = response.json()["results"]
+        invalid = next(item for item in results if item.get("source", {}).get("source_id") == "bad-lease")
+        assert invalid == {
+            "risk": None,
+            "source": {"source_type": "lease", "source_id": "bad-lease"},
+            "assessment": {"recommendation": None, "source": "fallback", "failure_code": "incomplete_authoritative_facts"},
+            "requires_manager_review": True,
+        }
+        assert {item["risk"]["source_id"] for item in results if item.get("risk")} == {"demo-rent", "demo-lease"}
+        assert set(calls) == {"demo-rent", "demo-lease"}  # Bad facts never reach inference.
+        with closing(init_connection(database)) as db:
+            assert [tuple(row) for row in db.execute("SELECT * FROM lease ORDER BY lease_id")] == original
+    finally:
+        app.state.evidence_service._repo.close()
+
+
+def test_risk_endpoint_keeps_no_deadline_and_inactive_lease_semantics(tmp_path, monkeypatch):
+    database = tmp_path / "no-deadline.db"
+    seed(database)
+    today = date.today()
+    with closing(init_connection(database)) as db:
+        for lid, start, end in [
+            ("open-ended", today.isoformat(), None),
+            ("expired", (today - timedelta(days=20)).isoformat(), (today - timedelta(days=1)).isoformat()),
+            ("future", (today + timedelta(days=1)).isoformat(), (today + timedelta(days=15)).isoformat()),
+        ]:
+            db.execute("INSERT INTO lease(lease_id,property_id,tenant_id,start_date,end_date,created_at) "
+                       "VALUES (?,'demo-property','demo-tenant',?,?,'2026-10-30T00:00:00Z')", (lid, start, end))
+        db.commit()
+    monkeypatch.setenv("RENTMATE_SCHEDULER_TOKEN", "scheduler-fixture")
+    monkeypatch.setattr(LeaseRentRiskAdvisor, "assess", lambda *args, **kwargs:
+                        RiskAssessmentResult(source="fallback", failure_code="explicit_test_stub"))
+    app = create_app(str(database), str(tmp_path / "uploads"))
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/ops/lease-rent/risk-assessment", headers={"Authorization": "Bearer scheduler-fixture"})
+        assert response.status_code == 200
+        assert {item["risk"]["source_id"] for item in response.json()["results"]} == {"demo-rent", "demo-lease"}
+    finally:
+        app.state.evidence_service._repo.close()
 
 
 class _Response:
