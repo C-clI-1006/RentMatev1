@@ -114,6 +114,31 @@ class SQLiteLeaseRentRepository(LeaseRentFactRepository):
         )
         return scope is not None and scope.property_id == property_id
 
+    def reminder_facts(self, *, source_type: str, source_id: str) -> dict:
+        """Authoritative, canonical reminder inputs; caller owns the transaction."""
+        scope = self.resolve_source_scope(source_type=source_type, source_id=source_id)
+        if scope is None:
+            raise LeaseRentDataError("reminder source missing")
+        lease = self._rows("SELECT start_date,end_date,version,document_ref,created_at FROM lease WHERE lease_id=?", (scope.lease_id,))[0]
+        start = _parse_date(lease['start_date'], field_name='start_date')
+        end = _parse_date(lease['end_date'], field_name='end_date') if lease['end_date'] is not None else None
+        if end is not None and end < start:
+            raise LeaseRentDataError("invalid lease dates")
+        facts = dict(source_type=source_type, source_id=source_id, lease_id=scope.lease_id,
+                     tenant_id=scope.tenant_id, property_id=scope.property_id,
+                     start_date=start.isoformat(), end_date=end.isoformat() if end else None,
+                     lease_version=lease['version'], document_ref=lease['document_ref'],
+                     lease_created_at=lease['created_at'])
+        if source_type == 'rent_record':
+            row = self._rows("SELECT due_date,amount_due,amount_paid,period,status,created_at FROM rent_record WHERE rent_record_id=?", (source_id,))[0]
+            amounts = [Decimal(str(row[k])) for k in ('amount_due', 'amount_paid')]
+            if any(not amount.is_finite() or amount < 0 for amount in amounts):
+                raise LeaseRentDataError("invalid payment facts")
+            facts.update(due_date=_parse_date(row['due_date'], field_name='due_date').isoformat(),
+                         amount_due=str(amounts[0].normalize()), amount_paid=str(amounts[1].normalize()),
+                         period=row['period'], recorded_status=row['status'], rent_created_at=row['created_at'])
+        return facts
+
     def find_facts(
         self,
         *,

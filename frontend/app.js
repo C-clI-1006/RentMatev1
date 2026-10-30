@@ -145,7 +145,13 @@ async function documentDetail(id) {
 function reviewCards(queue) {
   return queue.length?queue.map(q=>'<section class="card"><div class="card-head"><h2>Reply awaiting your decision</h2>'+badge(q.draft.status)+'</div><p class="hint">Draft '+esc(q.draft.draft_id)+' · Version '+esc(q.draft.version)+'</p><h3>Original message</h3><p>'+esc(q.original_message || 'No original message attached; inspect source facts below.')+'</p><p><strong>Review reason:</strong> '+esc(q.reason)+'</p><form class="reviewForm" data-id="'+esc(q.draft.draft_id)+'" data-version="'+esc(q.draft.version)+'"><label>Final reply<textarea name="final_content" required>'+esc(q.draft.content)+'</textarea></label><label>Decision reason<input name="reason" placeholder="Required when rejecting"></label><div class="actions"><button name="decision" value="approved">Approve exact version</button><button name="decision" value="rejected" class="danger">Reject reply</button></div></form>'+technical({draft:q.draft,source_facts:q.source_facts,property_id:q.property_id})+'</section>').join(''):empty('No pending reply drafts. Approved and rejected drafts leave this queue.');
 }
-async function reviews() { return notice('Shared reply approval is separate from document classification review. Approval queues a reply; delivery happens through the dispatcher.')+reviewCards(await request('/api/reviews'))+decisionReceipts(); }
+function handoffCards(cases) {
+  return '<section class="card"><h2>Human handoffs</h2><p>Cases contain original tenant messages, not AI reply drafts. Resolving or dismissing a case does not approve or send a reply.</p>'+(cases.length?cases.map(c=>'<article class="handoff-item"><h3>Message requiring human handling</h3>'+badge(c.status)+'<p>'+esc(c.original_message)+'</p><p><strong>Reason:</strong> '+esc(c.reason)+'</p><p class="hint">Case '+esc(c.case_id)+' · Message '+esc(c.message_id)+'</p>'+(c.status==='open'?'<form class="handoffForm" data-id="'+esc(c.case_id)+'"><label>Resolution / action taken<textarea name="resolution" maxlength="2000" required></textarea></label><div class="actions"><button name="outcome" value="resolved">Resolve case</button><button name="outcome" value="dismissed" class="secondary">Dismiss case</button></div></form>':'<p>'+esc(c.resolution)+'</p><small>'+esc(c.resolver_id)+' · '+esc(date(c.resolved_at))+'</small>')+'</article>').join(''):empty('No human handoff cases.'))+'</section>';
+}
+async function reviews() {
+  const [queue,cases]=await Promise.all([request('/api/reviews'),request('/api/reviews/handoffs')]);
+  return notice('Shared reply approval is separate from document classification review. Approval queues a reply; delivery happens through the dispatcher.')+handoffCards(cases)+reviewCards(queue)+decisionReceipts();
+}
 function decisionReceipts() { return state.decisions.length?'<section class="card"><h2>Decisions in this session</h2>'+state.decisions.map(d=>'<p>'+badge(d.decision)+' · <code>'+esc(d.draft_id)+'</code></p>'+technical(d)).join('')+'</section>':''; }
 function operations(kind='all') {
   return '<section class="card"><h2>Local operations</h2><p class="muted">Explicit scheduler actions for this demo. A separate operations credential is required.</p><div class="actions">'+(kind!=='dispatch'?button('Run rent & lease scan','scan','',false):'')+(kind!=='scan'?button('Handoff maintenance updates','handoff')+button('Dispatch queued notifications','dispatch','',false):'')+'</div><p class="hint">Dispatch delivers to the local tenant inbox, not external email or SMS. Scans never run on page load.</p>'+state.operations.map(o=>'<h3>'+esc(o.name)+'</h3>'+technical(o.result)).join('')+'</section>';
@@ -278,12 +284,16 @@ document.addEventListener('click', async e=>{
 });
 document.addEventListener('submit',async e=>{
   const f=e.target; if(f.id==='sessionForm') return;
-  if(!['messageForm','maintenanceForm','uploadForm','statusForm','assessmentForm','evidenceReviewForm','reportForm','timelineForm'].includes(f.id) && !f.classList.contains('reviewForm')) return;
+  if(!['messageForm','maintenanceForm','uploadForm','statusForm','assessmentForm','evidenceReviewForm','reportForm','timelineForm'].includes(f.id) && !f.classList.contains('reviewForm') && !f.classList.contains('handoffForm')) return;
   e.preventDefault(); const submitter=e.submitter || f.querySelector('button'); if(f.dataset.busy==='true') return;
   const data=Object.fromEntries(new FormData(f)); const selectedDecision=e.submitter?.value;
   let context=captureContext();
   f.dataset.busy='true'; const controls=Array.from(f.querySelectorAll('button')); controls.forEach(b=>b.disabled=true);
   try {
+    if(f.classList.contains('handoffForm')) {
+      await request('/api/reviews/handoffs/'+enc(f.dataset.id)+'/resolution',{method:'POST',body:{outcome:selectedDecision,resolution:data.resolution}});
+      context=await refreshCurrent('reviews',context); flash('Handoff case updated. No reply was approved or sent.');
+    }
     if(f.id==='messageForm') {
       const r=await request('/api/communication/messages',{method:'POST',body:{content:data.content}}); state.receipts.unshift({...r,content:data.content}); f.reset(); context=await refreshCurrent('messages',context); flash('Message recorded. Reply: '+r.reply_status+' · Delivery: '+r.delivery_status+'.');
     }

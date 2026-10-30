@@ -37,14 +37,17 @@ def db(tmp_path):
         INSERT INTO lease (lease_id,property_id,tenant_id,start_date,end_date,created_at)
           VALUES ('l1','p1','t1','2026-01-01','2026-12-31','{TS}');
         INSERT INTO rent_record
-          (rent_record_id,lease_id,property_id,period,due_date,status,created_at)
-          VALUES ('rr1','l1','p1','2026-10','2026-10-01','overdue','{TS}');
+          (rent_record_id,lease_id,property_id,period,due_date,amount_due,amount_paid,status,created_at)
+          VALUES ('rr1','l1','p1','2026-10','2026-10-01',1000,0,'overdue','{TS}');
         INSERT INTO draft
           (draft_id,source_kind,source_id,content,review_reason,status,created_at)
           VALUES ('d1','rent_reminder','rent-overdue:rr1:2026-10-01',
                   'Exact approved reminder','scheduled reminder','pending_review','{TS}');
         """
     )
+    from lease_rent.repository import SQLiteLeaseRentRepository
+    facts = SQLiteLeaseRentRepository(connection).reminder_facts(source_type='rent_record', source_id='rr1')
+    connection.execute('INSERT INTO reminder_basis VALUES (?,?)', ('d1', json.dumps({'facts': facts})))
     connection.commit()
     yield connection
     connection.close()

@@ -198,6 +198,28 @@ CREATE TABLE IF NOT EXISTS draft (
 );
 
 CREATE INDEX IF NOT EXISTS idx_draft_message ON draft (message_id);
+
+-- Immutable authoritative basis used to prepare a scheduled reminder.
+CREATE TABLE IF NOT EXISTS reminder_basis (
+    draft_id TEXT PRIMARY KEY REFERENCES draft(draft_id) ON DELETE CASCADE,
+    basis TEXT NOT NULL
+);
+
+-- A handoff is a case, not an invented reply draft or approval.
+CREATE TABLE IF NOT EXISTS communication_handoff (
+    case_id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL UNIQUE REFERENCES message(message_id),
+    property_id TEXT NOT NULL REFERENCES property(property_id),
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved','dismissed')),
+    created_at TEXT NOT NULL,
+    resolver_id TEXT REFERENCES manager(manager_id),
+    resolution TEXT,
+    resolved_at TEXT,
+    CHECK ((status='open' AND resolver_id IS NULL AND resolution IS NULL AND resolved_at IS NULL)
+        OR (status!='open' AND resolver_id IS NOT NULL AND resolution IS NOT NULL AND resolved_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_handoff_property ON communication_handoff(property_id,status,created_at);
 -- Idempotency for system-generated drafts: one draft per source
 -- (re-runs of a scheduled job must not create a second review item).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_draft_source ON draft (source_id)
