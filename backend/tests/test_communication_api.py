@@ -147,6 +147,18 @@ def test_http_routine_communication_is_queued_then_dispatched_once(
             assert submitted.status_code == 200
             assert submitted.json()["reply_status"] == "auto_eligible"
             assert submitted.json()["delivery_status"] == "not_dispatched"
+            history = client.get('/api/communication/messages', headers={"Authorization": "Bearer tenant-token"})
+            assert history.status_code == 200
+            assert history.json()[0]['message_id'] == submitted.json()['message_id']
+            assert history.json()[0]['reply_content']
+            assert client.get('/api/communication/messages').status_code in (401, 403)
+            check = init_connection(database)
+            check.execute("UPDATE draft SET status='pending_review' WHERE message_id=?", (submitted.json()['message_id'],))
+            check.commit()
+            assert client.get('/api/communication/messages', headers={"Authorization": "Bearer tenant-token"}).json()[0]['reply_content'] is None
+            check.execute("UPDATE draft SET status='auto_eligible' WHERE message_id=?", (submitted.json()['message_id'],))
+            check.commit()
+            check.close()
             first = client.post(
                 "/api/ops/notifications/dispatch",
                 headers={"Authorization": "Bearer scheduler-token"},

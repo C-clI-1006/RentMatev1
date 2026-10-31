@@ -118,6 +118,35 @@ def get_service(
     )
 
 
+@router.get("/messages")
+def message_history(
+    connection: Annotated[sqlite3.Connection, Depends(get_connection)],
+    auth: Annotated[AuthContext, Depends(get_auth)],
+) -> list[dict]:
+    """Expose only the caller's messages and explicitly auto-eligible replies.
+
+    Reading a reply does not change notification delivery or approve a draft.
+    Pending/rejected drafts and internal classification metadata stay private.
+    """
+    rows = connection.execute(
+        "SELECT message_id,content FROM message "
+        "WHERE tenant_id=? AND property_id=? ORDER BY received_at DESC, message_id DESC",
+        (auth.tenant_id, auth.property_id),
+    ).fetchall()
+    result = []
+    for row in rows:
+        draft = connection.execute(
+            "SELECT content,status FROM draft WHERE message_id=? "
+            "ORDER BY created_at DESC, draft_id DESC LIMIT 1", (row["message_id"],)
+        ).fetchone()
+        result.append({
+            "message_id": row["message_id"], "content": row["content"],
+            "reply_status": draft["status"] if draft else "manual_handling",
+            "reply_content": draft["content"] if draft and draft["status"] == "auto_eligible" else None,
+        })
+    return result
+
+
 @router.post("/messages", response_model=MessageResponse)
 def submit_message(
     body: MessageBody,
