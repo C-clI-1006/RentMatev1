@@ -32,7 +32,34 @@ async function refreshCurrent(page, context) {
   await pending; requireCurrent(next); return next;
 }
 const propQuery = () => 'property_id='+enc(state.property);
-const refs = value => value.split(',').map(s=>s.trim()).filter(Boolean);
+function selectedEvidence(form) {
+  if(form.querySelector('[data-evidence-unavailable]')) throw new Error('Document choices could not be loaded. Reopen this view before submitting.');
+  return [...new Set(new FormData(form).getAll('evidence_refs'))];
+}
+async function loadEvidenceChoices() {
+  try {
+    const documents=await request('/api/evidence/documents?'+propQuery());
+    if(!Array.isArray(documents)) throw new Error('Invalid document list response.');
+    return {documents:documents.filter(d=>d.upload_status==='saved')};
+  } catch(error) {
+    if(error.stale) throw error;
+    return {error};
+  }
+}
+function evidencePicker(choices, selected=[]) {
+  const unavailable=choices.error;
+  let html='<fieldset class="evidence-picker"'+(unavailable?' data-evidence-unavailable="true"':'')+'><legend>Supporting documents</legend>';
+  if(unavailable) return html+notice('Document choices could not be loaded. Reopen this view to retry. No references will be submitted silently.')+'</fieldset>';
+  const chosen=new Set(selected);
+  const documents=choices.documents;
+  html+='<p class="hint">Select uploaded files for this repair. No document ID needs to be copied. Upload new files in Documents, then reopen this view.</p>';
+  if(!documents.length && !chosen.size) html+=notice('No uploaded documents are available. You may report a repair without attachments; upload evidence before completion or closure.');
+  html+='<div class="evidence-options">'+documents.map(d=>'<label class="evidence-option"><input type="checkbox" name="evidence_refs" value="'+esc(d.document_id)+'"'+(chosen.has(d.document_id)?' checked':'')+'><span><strong>'+esc(d.original_filename)+'</strong><small>'+esc(documentCategory(d))+' · '+esc(date(d.uploaded_at))+'</small></span></label>').join('');
+  for(const id of chosen) {
+    if(!documents.some(d=>d.document_id===id)) html+='<label class="evidence-option"><input type="checkbox" name="evidence_refs" value="'+esc(id)+'" checked><span><strong>Previously referenced document (unavailable)</strong><small>Its metadata is unavailable. Clear only if you intend to remove this reference. The server will revalidate every selection.</small></span></label>';
+  }
+  return html+'</div></fieldset>';
+}
 function errorMessage(error) {
   const prefix = error.status === 409 ? 'This record changed or conflicts with an existing action. Refresh before trying again. ' : [401,403].includes(error.status) ? 'Your session is not authorized for this action. ' : error.retryable ? 'The service is temporarily unavailable. Read the result before retrying. ' : '';
   return prefix + error.message;
@@ -116,16 +143,20 @@ async function messages() {
   return html;
 }
 async function maintenance() {
-  const items=await request('/api/maintenance/requests');
-  return (state.role==='tenant'?'<section class="card"><h2>Report a repair</h2><form id="maintenanceForm"><div class="form-row"><label>Title<input name="title" required placeholder="Kitchen tap is dripping"></label><label>Location<input name="location" placeholder="Kitchen"></label></div><label>Description<textarea name="description" required placeholder="Tell us what happened and when it started."></textarea></label><label>Existing document IDs (optional, comma separated)<input name="evidence_refs" placeholder="Upload a document first, then use its ID"></label><button>Submit maintenance request</button></form></section>':'')+'<section class="card"><div class="card-head"><h2>Maintenance requests</h2><span class="muted">'+items.length+' records</span></div>'+maintenanceTable(items)+'</section>';
+  const context=captureContext();
+  const [items,choices]=await Promise.all([request('/api/maintenance/requests'),state.role==='tenant'?loadEvidenceChoices():Promise.resolve(null)]);
+  requireCurrent(context);
+  return (state.role==='tenant'?'<section class="card"><h2>Report a repair</h2><form id="maintenanceForm"><div class="form-row"><label>Title<input name="title" required placeholder="Kitchen tap is dripping"></label><label>Location<input name="location" placeholder="Kitchen"></label></div><label>Description<textarea name="description" required placeholder="Tell us what happened and when it started."></textarea></label>'+evidencePicker(choices)+'<button'+(choices.error?' disabled':'')+'>Submit maintenance request</button></form></section>':'')+'<section class="card"><div class="card-head"><h2>Maintenance requests</h2><span class="muted">'+items.length+' records</span></div>'+maintenanceTable(items)+'</section>';
 }
 async function requestDetail(id) {
-  const v=await request('/api/maintenance/requests/'+enc(id)); state.selectedRequest=v;
+  const context=captureContext();
+  const [v,choices]=await Promise.all([request('/api/maintenance/requests/'+enc(id)),state.role==='manager'?loadEvidenceChoices():Promise.resolve(null)]);
+  requireCurrent(context); state.selectedRequest=v;
   let html=button('← All requests','navigate','maintenance')+'<section class="card"><div class="card-head"><h2>'+esc(v.title)+'</h2>'+badge(v.status)+'</div><p>'+esc(v.description)+'</p><dl><dt>Location</dt><dd>'+esc(v.location || 'Not specified')+'</dd><dt>Priority</dt><dd>'+badge(v.priority ?? 'awaiting assessment')+'</dd><dt>Emergency flag</dt><dd>'+esc(String(v.emergency_flag))+'</dd><dt>Version</dt><dd>'+esc(v.version)+'</dd><dt>Request ID</dt><dd><code>'+esc(v.request_id)+'</code></dd></dl>';
   if(state.role==='manager') {
     // These are contract enum values, not an authorization decision. The server
     // remains authoritative for every transition and returns invalid/stale errors.
-    html+='<div class="grid"><form id="statusForm"><h3>Update status</h3><label>Target status<select name="target_status">'+['approved','in_progress','awaiting_confirmation','closed','cancelled'].map(s=>'<option>'+s+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" required></textarea></label><label>Evidence document IDs<input name="evidence_refs" placeholder="Required to close; comma separated"></label><button>Record status change</button><p class="hint">The backend enforces valid transitions and version '+esc(v.version)+'. Invalid changes are rejected.</p></form><form id="assessmentForm"><h3>Manual assessment</h3><label>Priority<select name="priority"><option>routine</option><option>urgent</option><option>emergency</option></select></label><label>Rationale<textarea name="rationale" required></textarea></label><button>Record assessment</button><p class="hint">Available for submitted, under_review or assessed requests. The server validates eligibility.</p></form></div>';
+    html+='<div class="grid"><form id="statusForm"><h3>Update status</h3><label>Target status<select name="target_status">'+['approved','in_progress','awaiting_confirmation','closed','cancelled'].map(s=>'<option>'+s+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" required></textarea></label>'+evidencePicker(choices,v.events?.at(-1)?.evidence_refs || [])+'<button'+(choices.error?' disabled':'')+'>Record status change</button><p class="hint">The backend enforces valid transitions and version '+esc(v.version)+'. Invalid changes are rejected.</p></form><form id="assessmentForm"><h3>Manual assessment</h3><label>Priority<select name="priority"><option>routine</option><option>urgent</option><option>emergency</option></select></label><label>Rationale<textarea name="rationale" required></textarea></label><button>Record assessment</button><p class="hint">Available for submitted, under_review or assessed requests. The server validates eligibility.</p></form></div>';
   }
   html+=technical(v)+'</section><section class="card"><h2>Request history</h2>'+events(v.events)+'</section><section class="card"><h2>Evidence references</h2>'+(v.events?.some(e=>e.evidence_refs?.length)?v.events.filter(e=>e.evidence_refs?.length).map(e=>'<p>'+esc(e.to_status)+': '+e.evidence_refs.map(id=>button('Open document '+id,'document',id)).join(' ')+'</p>').join(''):empty('No document references recorded for this request.'))+button('Inspect contextual timeline','timeline',v.request_id)+'</section>';
   $('content').innerHTML=html; $('pageTitle').textContent='Maintenance detail';
@@ -324,7 +355,7 @@ document.addEventListener('submit',async e=>{
       const r=await request('/api/communication/messages',{method:'POST',body:{content:data.content}}); state.receipts.unshift({...r,content:data.content}); f.reset(); context=await refreshCurrent('messages',context); flash('Message recorded. Reply: '+r.reply_status+' · Delivery: '+r.delivery_status+'.');
     }
     if(f.id==='maintenanceForm') {
-      f.dataset.key ||= crypto.randomUUID(); const r=await request('/api/maintenance/requests',{method:'POST',headers:{'Idempotency-Key':f.dataset.key},body:{title:data.title,description:data.description,location:data.location || null,evidence_refs:refs(data.evidence_refs)}});
+      f.dataset.key ||= crypto.randomUUID(); const r=await request('/api/maintenance/requests',{method:'POST',headers:{'Idempotency-Key':f.dataset.key},body:{title:data.title,description:data.description,location:data.location || null,evidence_refs:selectedEvidence(f)}});
       if(r.status!=='registered') throw new Error('Request was not registered: '+JSON.stringify(r)); f.reset(); await requestDetail(r.request_id); flash('Maintenance request registered: '+r.request_id);
     }
     if(f.id==='uploadForm') {
@@ -333,7 +364,7 @@ document.addEventListener('submit',async e=>{
     }
     if(f.id==='statusForm' || f.id==='assessmentForm') {
       if(!confirm('Record this manager action on version '+state.selectedRequest.version+'?')) return;
-      const v=state.selectedRequest; const assessment=f.id==='assessmentForm'; const body=assessment?{priority:data.priority,rationale:data.rationale,expected_version:v.version}:{target_status:data.target_status,reason:data.reason,evidence_refs:refs(data.evidence_refs),expected_version:v.version};
+      const v=state.selectedRequest; const assessment=f.id==='assessmentForm'; const body=assessment?{priority:data.priority,rationale:data.rationale,expected_version:v.version}:{target_status:data.target_status,reason:data.reason,evidence_refs:selectedEvidence(f),expected_version:v.version};
       const r=await request('/api/maintenance/requests/'+enc(v.request_id)+(assessment?'/assessment':'/status'),{method:'POST',body}); await requestDetail(v.request_id); flash('Manager action recorded: '+(r.persisted_status || r.status));
     }
     if(f.id==='evidenceLinkForm') {

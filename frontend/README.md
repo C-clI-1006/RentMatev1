@@ -12,6 +12,9 @@ interactive presentation, [FRONTEND_API_INVENTORY.md](FRONTEND_API_INVENTORY.md)
 for actual API schemas and gaps, [FRONTEND_WORKFLOW_MATRIX.md](FRONTEND_WORKFLOW_MATRIX.md)
 for coverage, and [FRONTEND_TEST_RESULTS.md](FRONTEND_TEST_RESULTS.md) for verification.
 
+For file-based attachment selection in Maintenance, see
+[MAINTENANCE_EVIDENCE_PICKER.md](MAINTENANCE_EVIDENCE_PICKER.md).
+
 ## Technical dashboard (preserved)
 
 `index.html` is a no-build demonstration console served by FastAPI at

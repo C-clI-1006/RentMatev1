@@ -27,11 +27,12 @@ function harness(respond) {
   class Data {
     constructor(form){this.values=new Map(Object.entries(form?.fields||{}));}
     append(key,value){this.values.set(key,value);}
+    getAll(key){const v=this.values.get(key);return v===undefined?[]:Array.isArray(v)?v:[v];}
     [Symbol.iterator](){return this.values[Symbol.iterator]();}
   }
   const context=vm.createContext({document,api:async(path,options)=>{calls.push({path,options});return respond(path,options);},
     FormData:Data,crypto:{randomUUID},confirm:()=>true,setTimeout,URL,console});
-  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory,documentReviewStatus,documentReviewForm,recordLinks,propertyTimeline};',context);
+  vm.runInContext(source+'\nglobalThis.ui={state,render,requestDetail,documentDetail,reportDetail,timeline,modelAction,documentCategory,documentReviewStatus,documentReviewForm,recordLinks,propertyTimeline,evidencePicker,selectedEvidence};',context);
   const ui=context.ui;
   Object.assign(ui.state,{token:'manager-P1',property:'P1',role:'manager',scheduler:'ops-P1',epoch:1});
   function switchSession() {
@@ -127,7 +128,7 @@ for(const [id,fields] of forms) {
     h.ui.state.selectedRequest=view('P1-request');h.ui.state.selectedDocument={document_id:'P1-document'};
     const control={value:id==='reportForm'?'generate':id==='handoffForm'?'resolved':'approved',disabled:false};let resets=0;
     const form={id,dataset:{id:'P1-draft',version:'1'},fields,elements:{file:{files:['test-file']}},
-      classList:{contains:name=>['reviewForm','handoffForm'].includes(id)&&name===id},querySelectorAll:()=>[control],reset(){resets++;}};
+      classList:{contains:name=>['reviewForm','handoffForm'].includes(id)&&name===id},querySelector:()=>null,querySelectorAll:()=>[control],reset(){resets++;}};
     const pending=h.listeners.submit({target:form,submitter:control,preventDefault(){}});
     h.switchSession();await flush();
     late.resolve({status:'registered',request_id:'P1-request',document:{document_id:'P1-document'},
@@ -290,4 +291,65 @@ test('uncertain documents cannot display the manual association form',async()=>{
   await h.ui.recordLinks('doc-1');
   assert.ok(h.nodes.get('documentLinks').innerHTML.includes('Complete classification review'));
   assert.ok(!h.nodes.get('documentLinks').innerHTML.includes('evidenceLinkForm'));
+});
+
+test('evidence choices show escaped file names and preserve previous references',()=>{
+ const h=harness(()=>[]);
+ const html=h.ui.evidencePicker({documents:[{document_id:'file-1',original_filename:'<img src=x>.pdf',classification:'classified',review_required:false,machine_category:'invoice',uploaded_at:'2026-10-31T00:00:00Z'}]},['file-1','missing-file']);
+ assert.ok(html.includes('&lt;img src=x&gt;.pdf') && !html.includes('<img src=x>'));
+ assert.ok(html.includes('value="file-1" checked'));
+ assert.ok(html.includes('value="missing-file" checked'));
+ assert.ok(html.includes('Previously referenced document (unavailable)'));
+ assert.ok(!html.includes('input name="evidence_refs" placeholder'));
+});
+
+test('tenant intake submits every selected document ID and no document metadata',async()=>{
+ const h=harness((path,o)=>o.method==='POST'?{status:'registered',request_id:'new-request'}:path.includes('/requests/new-request')?view('new-request'):[]);
+ Object.assign(h.ui.state,{role:'tenant',token:'tenant-P1'});
+ const control={disabled:false};const form={id:'maintenanceForm',dataset:{},fields:{title:'Repair',description:'Loose handle',location:'Kitchen',evidence_refs:['one','two','one']},
+  querySelector:()=>null,classList:{contains:()=>false},querySelectorAll:()=>[control],reset(){}};
+ await h.listeners.submit({target:form,submitter:control,preventDefault(){}});
+ const sent=h.calls.find(c=>c.options.method==='POST');
+ assert.deepEqual(Array.from(sent.options.body.evidence_refs),['one','two']);
+ assert.equal(sent.options.token,'tenant-P1');
+ assert.deepEqual(Object.keys(sent.options.body).sort(),['description','evidence_refs','location','title']);
+});
+
+test('manager status sends selected documents with the displayed expected version',async()=>{
+ const h=harness((path,o)=>o.method==='POST'?{persisted_status:'approved'}:path.includes('/requests/current')?view('current'):[]);
+ h.ui.state.selectedRequest=view('current');
+ const control={disabled:false};const form={id:'statusForm',dataset:{},fields:{target_status:'approved',reason:'Reviewed',evidence_refs:['inspection','invoice']},
+  querySelector:()=>null,classList:{contains:()=>false},querySelectorAll:()=>[control]};
+ await h.listeners.submit({target:form,submitter:control,preventDefault(){}});
+ const sent=h.calls.find(c=>c.options.method==='POST');
+ assert.deepEqual(Array.from(sent.options.body.evidence_refs),['inspection','invoice']);
+ assert.equal(sent.options.body.expected_version,2);
+ assert.equal(sent.options.token,'manager-P1');
+});
+
+test('failed document loading disables intake instead of silently omitting references',async()=>{
+ const h=harness(path=>path.includes('/evidence/documents')?Promise.reject(new Error('Unavailable')):[]);
+ Object.assign(h.ui.state,{role:'tenant',token:'tenant-P1'});
+ await h.ui.render('maintenance');
+ const html=h.nodes.get('content').innerHTML;
+ assert.ok(html.includes('data-evidence-unavailable') && html.includes('<button disabled>Submit maintenance request'));
+ assert.throws(()=>h.ui.selectedEvidence({querySelector:()=>({})}),/could not be loaded/);
+ assert.equal(h.calls.filter(c=>c.options.method==='POST').length,0);
+});
+
+test('detail waits for scoped documents and keeps latest event references checked',async()=>{
+ const h=harness(path=>path.includes('/evidence/documents')?[{document_id:'file-1',upload_status:'saved',original_filename:'invoice.pdf'}]:{...view('current'),events:[{evidence_refs:['old-ref']},{evidence_refs:['file-1']}]});
+ await h.ui.requestDetail('current');
+ const html=h.nodes.get('content').innerHTML;
+ assert.ok(html.includes('value="file-1" checked'));
+ assert.ok(!html.includes('value="old-ref" checked'));
+ assert.ok(h.calls.some(c=>c.path==='/api/evidence/documents?property_id=P1'));
+});
+
+test('late document choices cannot restore an old manager request after switching session',async()=>{
+ const late=deferred();const h=harness(path=>path.includes('/evidence/documents?property_id=P1')?late.promise:path.includes('/requests/P1-record')?view('P1-record'):[]);
+ const pending=h.ui.requestDetail('P1-record');const rejected=assert.rejects(pending,e=>e.stale===true);
+ h.switchSession();await flush();late.resolve([{document_id:'private-file',upload_status:'saved',original_filename:'PRIVATE.pdf'}]);await rejected;
+ assert.equal(h.ui.state.selectedRequest,null);
+ assert.ok(!h.nodes.get('content').innerHTML.includes('PRIVATE.pdf'));
 });
