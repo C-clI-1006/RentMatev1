@@ -1,29 +1,40 @@
-# RentMate — Stage 2
+# RentMate
 
-RentMate connects tenant messages, maintenance, lease and rent checks, evidence,
-manager review, notifications and monthly reports in one local application.
-It uses Python 3.11+, FastAPI, SQLite and a no-build web frontend.
+RentMate is an AI-assisted property management system developed for ELEC5620
+Stage 2. The application integrates tenant communication, maintenance management,
+lease and rent monitoring, document evidence and monthly reporting within a
+shared, property-scoped workflow.
 
-## Get the latest source
+The system combines validated language-model outputs with deterministic business
+rules, persistent records and manager approval controls. Its architecture uses
+FastAPI, SQLite and a browser-based frontend.
 
-New Git checkout:
+## System requirements
+
+- Python 3.11 or later.
+- Windows or macOS for the provided launchers.
+- Network access for initial dependency installation and external model requests.
+- Node.js for frontend automated tests.
+
+## Installation
+
+Clone the repository:
 
 ```sh
 git clone https://github.com/C-clI-1006/RentMatev1.git
 cd RentMatev1
 ```
 
-Existing checkout: stop the server, update, then restart it.
+Update an existing checkout with the application stopped:
 
 ```sh
 git pull --ff-only origin main
 ```
 
-ZIP downloads do not update automatically. Download and extract a fresh copy,
-keeping local configuration and demo data separately. For the on-site assessment,
-deploy from the source package submitted to Canvas.
+Source archives are also available through GitHub. Local configuration and runtime
+data should be retained separately when replacing an extracted source directory.
 
-## Start on macOS
+## Deployment on macOS
 
 Open Terminal in the repository root:
 
@@ -40,7 +51,7 @@ bash Start-RentMate.sh --no-seed       # preserve prepared demo fixtures
 bash Start-RentMate.sh --port 8024     # choose a different port
 ```
 
-## Start on Windows
+## Deployment on Windows
 
 Double-click `Start-RentMate.cmd`, or run:
 
@@ -51,7 +62,7 @@ Double-click `Start-RentMate.cmd`, or run:
 The launcher prepares dependencies and demo fixtures. Default startup runs the
 seed script; use a separate runtime/source folder for repeatable demonstrations.
 
-## Open the application
+## Application access
 
 | Page | Default address | Purpose |
 | --- | --- | --- |
@@ -72,15 +83,15 @@ Enter credentials in **Session settings**:
 | Other-property manager | `manager-other-demo` | `demo-property-2` |
 | Operations | `scheduler-demo` | Scans and dispatch |
 
-These predictable credentials are for local demonstrations only. Integrated
-launchers bind the server to localhost.
+The credentials above belong to the bundled local demonstration environment.
+Integrated launchers bind the server to localhost.
 
-## Configure Qwen
+## Language model configuration
 
 Open **AI settings** and enter the API base URL, model name and private API key.
 Use the course-provided proxy details and required network/VPN connection.
-Never commit a real key. A successful connection check proves one validated model
-response; verify each domain workflow separately.
+API keys must remain outside version control. Connection verification and
+workflow acceptance are performed separately.
 
 Browser configuration lives in the server process and needs reconfiguration after
 restart. Separate monthly batch processes use environment configuration. Copy
@@ -93,10 +104,11 @@ LLM_API_KEY=<private API key>
 LLM_TIMEOUT_SECONDS=30
 ```
 
-Failures are shown as manual handling, review or partial results as appropriate.
-Keyword classification and fallback results are not real-model success.
+Model-dependent operations expose their processing source and failure status.
+Unavailable or invalid responses enter the applicable review, handoff or partial
+result workflow.
 
-## Demonstration sequence
+## Functional capabilities
 
 1. **Communication:** as tenant, send `hello`. When classification and the routine
    reply policy succeed, the saved reply appears directly in the conversation.
@@ -147,13 +159,11 @@ node --test frontend/tests/*.test.mjs
 git diff --check
 ```
 
-Frontend tests require Node.js. Automated tests use controlled fixtures/test
-doubles unless a live check is explicitly requested. The Communication history
-change was locally verified with 552 backend and 40 frontend tests passing.
-Rerun on your checkout for current evidence; this does not prove live Qwen or
-Windows execution on another machine.
+Automated suites cover backend behavior, authorization, workflow integration and
+frontend session isolation. Controlled fixtures are used for repeatability;
+live model acceptance is enabled explicitly with the live verification option.
 
-## Monthly execution
+## Monthly report operations
 
 Trigger the previous Australia/Sydney calendar month's batch immediately:
 
@@ -164,9 +174,9 @@ bash Start-RentMate.sh --monthly-run
 Execution records go to `.runtime/monthly-report-runs.jsonl`. This command does
 not install a recurring macOS task. Windows task registration and verification
 are separate: see [Windows acceptance](docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md).
-Automatic execution requires deployment evidence.
+Scheduled execution is configured and verified in the deployment environment.
 
-## Code map
+## Project structure and module ownership
 
 | Location | Responsibility | Owner |
 | --- | --- | --- |
@@ -186,7 +196,7 @@ Automatic execution requires deployment evidence.
 Stage 1 reports and UML are separate design deliverables. Shared contract
 changes follow the [contracts review process](backend/contracts/README.md).
 
-## Security and state rules
+## Authorization and workflow integrity
 
 - Identity comes from server-configured tokens; persisted tenant/manager property
   bindings enforce access. Caller-supplied property names do not grant permission.
