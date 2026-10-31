@@ -1,149 +1,201 @@
-# RentMate (Stage 2)
+# RentMate — Stage 2
 
-RentMate is a tenant-facing service that helps tenants report maintenance issues,
-ask lease/rent questions, and keeps property managers in control of everything
-sent to tenants.
+RentMate connects tenant messages, maintenance, lease and rent checks, evidence,
+manager review, notifications and monthly reports in one local application.
+It uses Python 3.11+, FastAPI, SQLite and a no-build web frontend.
 
-This repository holds the Stage 2 implementation. Stage 1 design deliverables
-(reports, UML, guide) live in a separate document set — this repo is code only.
+## Get the latest source
 
-## Status
+New Git checkout:
 
-The integration candidate contains working Maintenance, Lease/Rent, Evidence,
-Manager Review, Reporting and Notification modules on one FastAPI/SQLite
-application. The UC4/UC5 path is executable end to end: scheduled checks make
-idempotent review drafts, a manager approves or rejects an exact version, the
-single dispatcher records truthful delivery outcomes, and the tenant reads a
-property-scoped inbox. Evidence/Maintenance events and monthly reporting are
-mounted in the same application.
-
-Run `Start-RentMate.cmd` for the integrated local demonstration. The older
-`Start-Maintenance.cmd` remains available for the standalone Maintenance demo.
-Live Qwen is configured through the environment; unavailable inference fails
-closed or enters manual review rather than silently pretending success.
-
-On macOS, run `bash Start-RentMate.sh` or double-click `Start-RentMate.command`.
-The primary business portal is `/app`; the technical verification console is
-preserved at `/demo`. Model address, key and model name can be entered using
-the protected local **AI settings** dialog. Browser configuration is held in
-the web server process only; separate monthly jobs use environment/`.env`.
-
-Team handoff: [English demo guide](frontend/DEMO_GUIDE.md) and
-[live model acceptance](docs/LIVE_MODEL_ACCEPTANCE.md).
-
-## Stack
-
-- Backend: Python 3.11+, FastAPI, SQLite (modular monolith, no microservices)
-- Frontend: no-build tenant/manager business portal plus technical verification console
-- LLM: school Qwen proxy via a single `backend/llm/` adapter; labelled test
-  doubles are used until the proxy connection is confirmed.
-
-## Repository layout
-
-```
-backend/
-  contracts/     Shared cross-module data + service interfaces (single source of truth)
-  communication/ UC1/UC2 intake, classification, routing, drafting (owner: Chaney)
-  maintenance/   Maintenance registration, priority, tracking (owner: Kerwin)
-  lease_rent/    Authorised lease/rent fact queries + rule checks (owner: Ziheng)
-  evidence/      Evidence upload, event consumption (owner: Jenny)
-  reporting/     Monthly reports, summaries (owner: Sharon)
-  llm/           Single LLM adapter (config, validation, error conversion)
-  notification/  Durable delivery outbox, dispatcher, retry and tenant inbox
-  review/        Manager review/approval (approval bound to a draft version)
-  repositories/  Persistence (SQLite)
-  shared/        Cross-cutting helpers (auth context, IDs, time)
-  main.py        FastAPI app entrypoint (thin; only wires routers)
-db/
-  schema.sql     SQLite schema draft
-frontend/
-  index.html     Integrated API demonstration console
+```sh
+git clone https://github.com/C-clI-1006/RentMatev1.git
+cd RentMatev1
 ```
 
-## Integration rules (binding)
+Existing checkout: stop the server, update, then restart it.
 
-1. Modules interact **only** via `backend/contracts/` types and public service
-   interfaces. Never read or write another module's private data/tables directly.
-2. `tenantId` / `propertyId` come from the **auth context**, not user input.
-   The tenant↔property binding is verified at the entry point.
-3. A manager approval is bound to a **specific draft version**. The sending
-   path reads only the approved version — no re-generation after approval.
-4. Rejection ⇒ **no tenant message**. Rejection must be observable in the UI.
-5. Delivery truth: `Accepted` ≠ `Sent`. Notification failures are recorded as
-   `failed` / `pending_retry` and shown as such — never as success.
-6. Deduplication: stable `eventId` (plus `recipientId` for notifications).
-   One retry owner per delivery flow (the dispatcher), no double retries.
-7. Sentiment detection (optional) may influence **tone only**; it can never
-   downgrade an emergency or bypass review.
+```sh
+git pull --ff-only origin main
+```
 
-## Getting started
+ZIP downloads do not update automatically. Download and extract a fresh copy,
+keeping local configuration and demo data separately. For the on-site assessment,
+deploy from the source package submitted to Canvas.
 
-Windows demonstration (creates an ignored local virtual environment/database):
+## Start on macOS
+
+Open Terminal in the repository root:
+
+```sh
+bash Start-RentMate.sh
+```
+
+Alternatively, double-click `Start-RentMate.command`. The launcher creates a
+local environment, installs dependencies and seeds demo fixtures before starting.
+Initial dependency installation needs network access.
+
+```sh
+bash Start-RentMate.sh --no-seed       # preserve prepared demo fixtures
+bash Start-RentMate.sh --port 8024     # choose a different port
+```
+
+## Start on Windows
+
+Double-click `Start-RentMate.cmd`, or run:
 
 ```powershell
 .\Start-RentMate.ps1
 ```
 
-Then open `http://127.0.0.1:8020` (it redirects to `/app`). Use `/demo` for the **Run full
-system check** button executes one visible HTTP path across Health, Evidence,
-Maintenance, Communication, UC4/UC5, Review, Notification, Reporting and
-cross-property isolation, showing PASS/FAIL and the important IDs for every
-step. To run the complete command-line suite instead of starting the server,
-use `.\Start-RentMate.ps1 -Verify`.
+The launcher prepares dependencies and demo fixtures. Default startup runs the
+seed script; use a separate runtime/source folder for repeatable demonstrations.
 
-Mac equivalents:
+## Open the application
+
+| Page | Default address | Purpose |
+| --- | --- | --- |
+| Business portal | http://127.0.0.1:8020/app | Tenant and manager workflows |
+| Verification console | http://127.0.0.1:8020/demo | Full System Check |
+| API documentation | http://127.0.0.1:8020/docs | Available HTTP operations |
+
+Use the port printed by your launcher if different. Open the HTTP address rather
+than an HTML file. Ctrl+C stops the server. Restart after backend updates and
+refresh the browser. Runtime data is stored under `.runtime/` by default.
+
+Enter credentials in **Session settings**:
+
+| Session | Demo token | Property |
+| --- | --- | --- |
+| Tenant | `tenant-demo` | `demo-property` |
+| Manager | `manager-demo` | `demo-property` |
+| Other-property manager | `manager-other-demo` | `demo-property-2` |
+| Operations | `scheduler-demo` | Scans and dispatch |
+
+These predictable credentials are for local demonstrations only. Integrated
+launchers bind the server to localhost.
+
+## Configure Qwen
+
+Open **AI settings** and enter the API base URL, model name and private API key.
+Use the course-provided proxy details and required network/VPN connection.
+Never commit a real key. A successful connection check proves one validated model
+response; verify each domain workflow separately.
+
+Browser configuration lives in the server process and needs reconfiguration after
+restart. Separate monthly batch processes use environment configuration. Copy
+`.env.example` to `backend/.env` and fill in these values if needed:
+
+```dotenv
+LLM_BASE_URL=<OpenAI-compatible base URL ending in /v1>
+LLM_MODEL=<model name>
+LLM_API_KEY=<private API key>
+LLM_TIMEOUT_SECONDS=30
+```
+
+Failures are shown as manual handling, review or partial results as appropriate.
+Keyword classification and fallback results are not real-model success.
+
+## Demonstration sequence
+
+1. **Communication:** as tenant, send `hello`. When classification and the routine
+   reply policy succeed, the saved reply appears directly in the conversation.
+   Messages persist across refresh and remain tenant/property scoped. Notification
+   delivery has its own state.
+2. **Maintenance:** send a repair message and inspect its linked request. Try
+   `There is a strong smell of gas in my kitchen.` for emergency handling.
+   Pending-review reply text remains hidden from tenants.
+3. **Evidence:** upload a fictional [sample document](demo/samples/README.md),
+   inspect classification and link it to a relevant record where authorized.
+4. **Manager Review:** switch to manager, inspect a draft and approve or reject
+   its exact version. Resolve/dismiss human handoff cases separately; this does
+   not approve or send a reply.
+5. **Notification:** dispatch using the operations credential, then inspect the
+   tenant inbox. Delivery is to the local inbox, not external email or SMS.
+6. **Lease & Rent:** run the authorized reminder scan. Assess current risks to
+   inspect rule findings and validated model recommendations when available.
+   Recommendations remain subject to manager review.
+7. **Reporting:** generate a property/month report, inspect source and narrative
+   availability, then verify report reuse or a requested new version.
+8. **Full System Check:** use `/demo` to run the 13 integrated checks. These
+   operations write data; use isolated prepared fixtures for repeatable runs.
+
+More detail: [English demo guide](frontend/DEMO_GUIDE.md),
+[live model acceptance](docs/LIVE_MODEL_ACCEPTANCE.md).
+
+## Verification
+
+macOS:
 
 ```sh
-bash Start-RentMate.sh                       # start /app
-bash Start-RentMate.sh --no-seed             # preserve prepared demo state
-bash Start-RentMate.sh --verify --no-seed    # deterministic + integration tests
-bash Start-RentMate.sh --monthly-run         # execute the monthly batch now
+bash Start-RentMate.sh --verify --no-seed
+bash Start-RentMate.sh --verify --live --no-seed
 ```
 
-The monthly batch selects the previous Australia/Sydney calendar month and
-records results in `.runtime/monthly-report-runs.jsonl`. It does not register a
-macOS launchd/cron task. Windows automatic scheduling still requires the
-[Windows acceptance procedure](docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md).
+Windows:
 
-For a one-click final check, configure `backend/.env` with the Campus Qwen
-settings and double-click `Verify-RentMate.cmd`. It runs the complete
-deterministic suite, repeats the named integrated HTTP/review/delivery
-scenarios with readable output, and then runs the real-model acceptance check.
-The sanitised live result is written to `.runtime/live-result.json`. When the
-course proxy is intentionally unavailable, run
-`.\Verify-RentMate.ps1 -SkipLive` from PowerShell.
-
-Manual setup:
-
-```bash
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp ../.env.example .env   # fill in LLM config when available
-uvicorn main:app --reload
+```powershell
+.\Start-RentMate.ps1 -Verify
+.\Start-RentMate.ps1 -Verify -Live
 ```
 
-API startup applies the shared versioned schema/migrations. Maintenance keeps
-its aggregate in `mc_*`; other modules use their owned shared-schema tables.
+With dependencies installed in your active environment, run from the repo root:
 
-## Ownership
+```sh
+python -m pytest backend/tests -q
+node --test frontend/tests/*.test.mjs
+git diff --check
+```
 
-| Area                        | Owner  |
-| --------------------------- | ------ |
-| Skeleton, contracts, infra  | Chaney |
-| communication module        | Chaney |
-| maintenance module          | Kerwin |
-| lease_rent module           | Ziheng |
-| evidence module             | Jenny  |
-| reporting module            | Sharon |
-| notification module         | Chaney |
-| review module               | Chaney |
-| repositories (SQLite)       | Chaney |
+Frontend tests require Node.js. Automated tests use controlled fixtures/test
+doubles unless a live check is explicitly requested. The Communication history
+change was locally verified with 552 backend and 40 frontend tests passing.
+Rerun on your checkout for current evidence; this does not prove live Qwen or
+Windows execution on another machine.
 
-Note: `db/schema.sql` sections are owned per table (see section comments in
-the file): lease/rent tables → Ziheng, drafts/review tables → Chaney,
-outbox → Chaney. Contract changes follow `backend/contracts/README.md`.
+## Monthly execution
 
-Contract changes: propose in `backend/contracts/`, review by the two affected
-owners, then update the affected models/tests. See
-`backend/contracts/README.md`.
+Trigger the previous Australia/Sydney calendar month's batch immediately:
+
+```sh
+bash Start-RentMate.sh --monthly-run
+```
+
+Execution records go to `.runtime/monthly-report-runs.jsonl`. This command does
+not install a recurring macOS task. Windows task registration and verification
+are separate: see [Windows acceptance](docs/WINDOWS_MONTHLY_TASK_VERIFICATION.md).
+Automatic execution requires deployment evidence.
+
+## Code map
+
+| Location | Responsibility | Owner |
+| --- | --- | --- |
+| `backend/communication/` | Intake, classification routing, drafts and updates | Chaney |
+| `backend/maintenance/` | Repair assessment and lifecycle | Kerwin |
+| `backend/lease_rent/` | Authorized facts, reminders and risk advice | Ziheng |
+| `backend/evidence/` | Uploads, classification, links and timeline | Jenny |
+| `backend/reporting/` | Monthly collection and reports | Sharon |
+| `backend/review/` | Manager decisions and human handoffs | Chaney |
+| `backend/notification/` | Queue, dispatcher, retries and local inbox | Chaney |
+| `backend/contracts/` | Shared interfaces and models | Shared |
+| `backend/llm/` | Model adapters and response validation | Shared |
+| `backend/shared/`, `db/` | Authorization, SQLite schema and migrations | Shared |
+| `frontend/app.html`, `frontend/app.js` | Business portal | Integrated frontend |
+| `frontend/index.html` | Technical verification console | Integrated frontend |
+
+Stage 1 reports and UML are separate design deliverables. Shared contract
+changes follow the [contracts review process](backend/contracts/README.md).
+
+## Security and state rules
+
+- Identity comes from server-configured tokens; persisted tenant/manager property
+  bindings enforce access. Caller-supplied property names do not grant permission.
+- Review triggers override automatic eligibility. Approval belongs to an exact
+  draft version. Pending or rejected replies cannot be dispatched.
+- Queued does not mean delivered. Dispatch checks current authorization and
+  relevant reminder facts before delivery.
+- Unknown/failed classification creates a durable human handoff.
+- Stable event IDs support retry deduplication. Separate HTTP submissions create
+  separate messages; there is no general HTTP replay guarantee.
+- Reports expose missing sources and narrative explicitly; partial success is
+  distinct from complete success.
