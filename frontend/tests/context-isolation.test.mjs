@@ -43,6 +43,16 @@ function harness(respond) {
   return {ui,nodes,document,listeners,calls,switchSession};
 }
 
+test('manual assessment preserves emergency priority and requires selection when unassessed',async()=>{
+  for(const priority of ['emergency',null]) {
+    const h=harness(path=>path.startsWith('/api/maintenance/requests/')?{...view('r1'),priority}:[]);
+    await h.ui.requestDetail('r1');
+    const html=h.nodes.get('content').innerHTML;
+    assert.ok(html.includes(priority?'<option value="emergency" selected>':'<option value="" disabled selected>'));
+    assert.ok(!html.includes('<option value="routine" selected>'));
+  }
+});
+
 test('Review Centre separates escaped handoff cases from reply approvals',async()=>{
   const h=harness(path=>path==='/api/reviews/handoffs'?[{case_id:'case-1',message_id:'message-1',status:'open',
     original_message:'<script>untrusted</script>',reason:'classifier unavailable'}]:[]);

@@ -8,7 +8,9 @@ export class ApiError extends Error {
   }
 }
 export async function api(path, {token, body, method = 'GET', headers = {}, binary = false} = {}) {
-  if (!token) throw new Error('Connect a session first. Operations require a separate scheduler credential.');
+  if (!token) throw new Error(path.startsWith('/api/ops/')
+    ? 'Enter the Operations credential in Session settings before running this action.'
+    : 'Connect your tenant or manager session in Session settings first.');
   const options = {method, headers: {...headers, Authorization: `Bearer ${token}`}};
   if (body instanceof FormData) options.body = body;
   else if (body !== undefined) {

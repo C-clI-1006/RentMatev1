@@ -417,13 +417,15 @@
           method: 'POST', headers: jsonHeaders(manager), body: JSON.stringify({expected_version: lease.draft.version, decision: 'rejected', reason: 'Synthetic full-demo rejection'})
         });
         state.approvedDraftId = rent.draft.draft_id;
+        state.approvedDraftVersion = rent.draft.version;
         return `approved=${rent.draft.draft_id}; rejected=${lease.draft.draft_id}`;
       });
 
       await check('Notification dispatch and exact tenant inbox', async () => {
+        requireValue(state.approvedDraftId, 'Blocked: manager approval did not complete. Prepare fresh demo fixtures before rerunning; dispatch was not attempted.');
         const dispatched = (await request('/api/ops/notifications/dispatch', {method: 'POST', headers: auth(scheduler)})).data;
         const inbox = (await request('/api/notifications/inbox', {headers: auth(tenant)})).data;
-        const expectedEvent = `draft:${state.approvedDraftId}:v1`;
+        const expectedEvent = `draft:${state.approvedDraftId}:v${state.approvedDraftVersion}`;
         if (!inbox.some(item => item.event_id === expectedEvent)) throw new Error(`Approved event ${expectedEvent} was not delivered`);
         return `processed=${dispatched.processed}; delivered=${dispatched.delivered}; inbox_items=${inbox.length}; approved event found`;
       });
