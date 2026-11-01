@@ -136,12 +136,20 @@ def message_history(
     result = []
     for row in rows:
         draft = connection.execute(
-            "SELECT content,status FROM draft WHERE message_id=? "
+            "SELECT draft_id,version,content,status FROM draft WHERE message_id=? "
             "ORDER BY created_at DESC, draft_id DESC LIMIT 1", (row["message_id"],)
         ).fetchone()
+        delivery = None
+        if draft:
+            delivery = connection.execute(
+                "SELECT status FROM notification_event WHERE recipient_id=? AND event_id IN (?,?) "
+                "ORDER BY CASE status WHEN 'delivered' THEN 0 ELSE 1 END LIMIT 1",
+                (auth.tenant_id, f"reply:{row['message_id']}", f"draft:{draft['draft_id']}:v{draft['version']}"),
+            ).fetchone()
         result.append({
             "message_id": row["message_id"], "content": row["content"],
             "category": row["message_type"],
+            "delivery_status": delivery["status"] if delivery else "not_dispatched",
             "reply_status": draft["status"] if draft else "manual_handling",
             "reply_content": draft["content"] if draft and draft["status"] == "auto_eligible" else None,
         })

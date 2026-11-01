@@ -282,13 +282,15 @@ class SQLiteLeaseRentRepository(LeaseRentFactRepository):
             "r.created_at, l.lease_id FROM rent_record r "
             "JOIN lease l ON l.lease_id = r.lease_id "
             "WHERE l.tenant_id = ? AND l.property_id = ? AND r.property_id = ? "
-            "AND r.period = ? AND date(l.start_date) <= date(?) "
+            "AND (r.period = ? OR (date(r.due_date) <= date(?) AND r.amount_due > r.amount_paid)) "
+            "AND date(l.start_date) <= date(?) "
             "AND (l.end_date IS NULL OR date(l.end_date) >= date(?))",
             (
                 tenant_id,
                 property_id,
                 property_id,
                 as_of.strftime("%Y-%m"),
+                day,
                 day,
                 day,
             ),

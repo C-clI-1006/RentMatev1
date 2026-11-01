@@ -175,7 +175,7 @@ def is_routine_fact_question(text):
     return bool(re.fullmatch(
         r"(?:how much (?:is my rent|rent is due)|"
         r"what is my (?:rent amount|lease (?:start|end) date)|"
-        r"when does my lease (?:start|end)|"
+        r"when does my (?:current )?lease (?:start|end)|"
         r"(?:have you received my rent payment(?: yet)?|has my rent been paid))",
         _normalise(text)))
 

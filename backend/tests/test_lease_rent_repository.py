@@ -194,6 +194,13 @@ def test_fact_query_returns_rent_amounts_without_partial_state(db):
     }
 
 
+def test_unpaid_previous_month_is_available_to_rent_fact_query(db):
+    db.execute("UPDATE rent_record SET period='2026-09',due_date='2026-09-30' WHERE rent_record_id='rent-1'")
+    result = LeaseRentQueryService(SQLiteLeaseRentRepository(db)).get_facts(_query(QuestionType.RENT_AMOUNT))
+    assert result.availability is FactAvailability.AVAILABLE
+    assert {fact.name: fact.value for fact in result.facts}['outstanding_amount'] == '750'
+
+
 def test_fact_query_returns_active_lease_dates(db):
     result = LeaseRentQueryService(SQLiteLeaseRentRepository(db)).get_facts(
         _query(QuestionType.LEASE_DATES)
