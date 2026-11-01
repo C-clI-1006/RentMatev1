@@ -270,9 +270,17 @@ class CommunicationService:
                                     review=review, eligibility=decision)
 
     def _route_smalltalk(self, message_id, content, triggers):
-        decision = policy.decide(policy.is_routine_greeting(content), *triggers)
+        from .chat import social_reply
+        generated = social_reply(content) if not triggers else None
+        decision = policy.decide(bool(generated) or policy.is_routine_greeting(content), *triggers)
+        reply = templates.smalltalk()
+        if decision.status is DraftStatus.AUTO_ELIGIBLE:
+            if generated:
+                reply = generated
+            self._audit('communication.social_reply', message_id,
+                        {'source': 'llm' if generated else 'template'})
         draft, review = self._draft_reply(message_id=message_id, request_id=None,
-                                         content=templates.smalltalk(), decision=decision)
+                                         content=reply, decision=decision)
         return CommunicationOutcome(message_id=message_id, category="smalltalk",
                                     routed_to="smalltalk", draft=draft, review=review,
                                     eligibility=decision)
@@ -425,8 +433,8 @@ class CommunicationService:
         )
         self._conn.commit()
         self._audit("draft.created", message_id, {"draft_id": draft.draft_id, "reason": reason})
-        if decision.status is DraftStatus.AUTO_ELIGIBLE:
-            self._queue_auto_reply(draft, auth_tenant_id=self._message_tenant(message_id))
+        # Immediate replies are read in Communication history, not duplicated
+        # into the notification inbox. Manager-approved replies use review's queue.
         review = None
         if decision.status is DraftStatus.PENDING_REVIEW:
             review = ReviewRequest(

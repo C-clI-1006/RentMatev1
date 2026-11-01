@@ -47,6 +47,7 @@ def test_apply_settings_never_reads_back_key_or_logs_it(client, caplog, capsys):
         "base_url": SETTINGS["base_url"], "model": SETTINGS["model"],
         "api_key_configured": True, "configured": True,
         "source": "runtime", "persistence": "server_process_only",
+        "connection_verified": False,
     }
     assert response.headers["cache-control"] == "no-store"
     read = client.get("/api/ops/llm/settings", headers=AUTH)
@@ -113,6 +114,11 @@ def test_model_probe_uses_configured_adapter_and_never_echoes_upstream_secrets(c
     assert result.status_code == 200
     assert result.json()["status"] == "validated_model_response"
     assert result.json()["source"] == "llm"
+    assert client.get('/api/ops/llm/settings', headers=AUTH).json()['connection_verified'] is True
+    client.put('/api/ops/llm/settings', headers=AUTH, json=SETTINGS)
+    assert client.get('/api/ops/llm/settings', headers=AUTH).json()['connection_verified'] is False
+    client.post('/api/ops/llm/test', headers=AUTH)
+    assert client.get('/api/ops/llm/settings', headers=AUTH).json()['connection_verified'] is True
     assert str(requests[0].url) == SETTINGS["base_url"] + "/chat/completions"
     assert json.loads(requests[0].content)["model"] == SETTINGS["model"]
     assert SETTINGS["api_key"] not in result.text
@@ -123,4 +129,5 @@ def test_model_probe_uses_configured_adapter_and_never_echoes_upstream_secrets(c
     monkeypatch.setattr("llm.classifier.httpx.Client", lambda **kwargs: real_client(transport=httpx.MockTransport(bad_answer), **kwargs))
     failure = client.post("/api/ops/llm/test", headers=AUTH)
     assert failure.status_code == 502
+    assert client.get('/api/ops/llm/settings', headers=AUTH).json()['connection_verified'] is False
     assert SETTINGS["api_key"] not in failure.text

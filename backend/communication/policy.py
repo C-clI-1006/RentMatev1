@@ -154,7 +154,20 @@ def _normalise(text):
 
 
 def is_routine_greeting(text):
-    return _normalise(text) in {"hi", "hello", "thanks", "thank you", "good morning", "hi, good morning"}
+    """Accept complete social utterances, never a greeting prefix on a request."""
+    normalised = _normalise(text).replace("’", "'")
+    normalised = re.sub(r"\bu\b", "you", normalised)
+    normalised = re.sub(r"\br\b", "are", normalised)
+    social = (
+        r"hi|hello|hey|hi there|hello there|good (?:morning|afternoon|evening)|"
+        r"thanks(?: a lot| so much)?|thank you(?: very much| so much)?|"
+        r"how are you(?: doing)?|how's your day|how is your day|"
+        r"(?:today is|it's|it is) a (?:good|great|lovely|beautiful|nice) day|"
+        r"(?:have|hope you have) a (?:good|great|lovely|nice) (?:day|weekend)|"
+        r"(?:i'm|i am) (?:good|fine|well)|you're welcome|you are welcome|"
+        r"goodbye|bye|see you(?: later)?|nice to meet you"
+    )
+    return bool(re.fullmatch(r"(?:" + social + r")(?:[,.!?;]+\s*(?:" + social + r"))*", normalised))
 
 
 def is_routine_fact_question(text):

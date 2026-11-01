@@ -89,6 +89,8 @@ def test_routine_communication_auto_dispatches_once_with_persisted_eligibility()
     db = _db()
     try:
         outcome = _service(db).handle_message(AuthContext("t1", "p1"), "hello")
+        # Explicitly seed a legacy queued reply to retain dispatcher regression coverage.
+        _service(db)._queue_auto_reply(outcome.draft, auth_tenant_id="t1")
         assert outcome.draft.status.value == "auto_eligible"
         event_id = f"reply:{outcome.message_id}"
         first = dispatch_one(
@@ -141,6 +143,8 @@ def test_auto_dispatch_delivery_failure_is_persisted():
     db = _db()
     try:
         outcome = _service(db).handle_message(AuthContext("t1", "p1"), "hello")
+        # Explicitly seed a legacy queued reply to retain dispatcher regression coverage.
+        _service(db)._queue_auto_reply(outcome.draft, auth_tenant_id="t1")
 
         class FailingAdapter:
             def deliver(self, **kwargs):
@@ -161,6 +165,8 @@ def test_routine_communication_revoked_tenant_binding_blocks_dispatch_and_audits
     db = _db()
     try:
         outcome = _service(db).handle_message(AuthContext("t1", "p1"), "hello")
+        # Explicitly seed a legacy queued reply to retain dispatcher regression coverage.
+        _service(db)._queue_auto_reply(outcome.draft, auth_tenant_id="t1")
         event_id = f"reply:{outcome.message_id}"
         assert outcome.draft.status.value == "auto_eligible"
         assert db.execute(

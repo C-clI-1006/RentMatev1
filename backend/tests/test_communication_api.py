@@ -107,7 +107,7 @@ def test_http_communication_uses_server_scope_and_real_module_adapters(
         app.state.evidence_service._repo.close()
 
 
-def test_http_routine_communication_is_queued_then_dispatched_once(
+def test_http_routine_reply_is_visible_in_conversation_without_notification(
     tmp_path, monkeypatch
 ):
     database = tmp_path / "communication-dispatch.db"
@@ -172,9 +172,10 @@ def test_http_routine_communication_is_queued_then_dispatched_once(
                 headers={"Authorization": "Bearer tenant-token"},
             )
         assert first.status_code == 200
-        assert first.json()["delivered"] == 1
+        assert first.json()["delivered"] == 0
+        assert first.json()["processed"] == 0
         assert second.status_code == 200
         assert second.json()["processed"] == 0
-        assert len(inbox.json()) == 1
+        assert len(inbox.json()) == 0
     finally:
         app.state.evidence_service._repo.close()

@@ -11,6 +11,8 @@ from .configuration import (
 )
 from .classifier import QwenClassifier
 
+_verified_configuration = None
+
 
 def require_local_operator(request: Request) -> None:
     try:
@@ -47,6 +49,7 @@ def _status(response: Response) -> dict:
         "configured": all((config.base_url, config.model, config.api_key)),
         "source": configuration_source(),
         "persistence": "server_process_only",
+        "connection_verified": config == _verified_configuration,
     }
 
 
@@ -57,6 +60,7 @@ def status(response: Response):
 
 @router.put("/settings")
 async def update(request: Request, response: Response):
+    global _verified_configuration
     # Parse manually so validation errors never echo the submitted secret/body.
     try:
         body = SettingsBody.model_validate(await request.json())
@@ -85,17 +89,22 @@ async def update(request: Request, response: Response):
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(422, "Provide a valid API base URL, model and key. Re-enter the key when changing the address.") from None
     set_configuration(ModelConfiguration(base_url=url, model=model, api_key=key))
+    _verified_configuration = None
     return _status(response)
 
 
 @router.delete("/settings")
 def restore(response: Response):
+    global _verified_configuration
+    _verified_configuration = None
     set_configuration(None)
     return _status(response)
 
 
 @router.post("/test")
 def probe(response: Response):
+    global _verified_configuration
+    _verified_configuration = None
     response.headers["Cache-Control"] = "no-store"
     configuration = get_configuration()
     if not all((configuration.base_url, configuration.model, configuration.api_key)):
@@ -103,5 +112,7 @@ def probe(response: Response):
     result = QwenClassifier().classify("Hello, thank you.")
     if result is None:
         raise HTTPException(502, "Model unavailable or response failed validation. Check the address, model, key and VPN.")
+    if get_configuration() == configuration:
+        _verified_configuration = configuration
     return {"status": "validated_model_response", "source": "llm",
             "category": result.category.value, "confidence": result.confidence}

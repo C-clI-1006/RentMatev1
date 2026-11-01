@@ -93,6 +93,9 @@ class KeywordClassifier(BaseClassifier):
         for kw in self.SMALLTALK_KEYWORDS:
             if self._contains_phrase(lowered, kw):
                 return Classification(Category.SMALLTALK, 0.9, "keyword:smalltalk")
+        from communication.policy import is_routine_greeting
+        if is_routine_greeting(content):
+            return Classification(Category.SMALLTALK, 0.9, "rule:smalltalk")
         # No signal at all -> ambiguous: let the service hand off.
         return Classification(Category.UNKNOWN, 0.2, "no keyword signal")
 
@@ -160,7 +163,10 @@ class QwenClassifier(BaseClassifier):
                                         "Classify one tenant property-management message. "
                                         "Return only JSON with category, confidence and optional note. "
                                         "Allowed category values are maintenance, lease_rent, "
-                                        "smalltalk, and unknown. Map complaints or general enquiries "
+                                        "smalltalk, and unknown. "
+                                        "Pure greetings, thanks and social remarks such as 'Today is a good day' "
+                                        "or 'How are you?' are smalltalk. A greeting followed by a repair or "
+                                        "rent question must follow the business intent, not smalltalk. Map enquiries "
                                         "to maintenance/lease_rent only when their intent is clear; "
                                         "otherwise use unknown. Do not decide identity, property "
                                         "ownership, emergency status, approval, or delivery."

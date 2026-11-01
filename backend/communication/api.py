@@ -129,7 +129,7 @@ def message_history(
     Pending/rejected drafts and internal classification metadata stay private.
     """
     rows = connection.execute(
-        "SELECT message_id,content FROM message "
+        "SELECT message_id,content,message_type FROM message "
         "WHERE tenant_id=? AND property_id=? ORDER BY received_at DESC, message_id DESC",
         (auth.tenant_id, auth.property_id),
     ).fetchall()
@@ -141,6 +141,7 @@ def message_history(
         ).fetchone()
         result.append({
             "message_id": row["message_id"], "content": row["content"],
+            "category": row["message_type"],
             "reply_status": draft["status"] if draft else "manual_handling",
             "reply_content": draft["content"] if draft and draft["status"] == "auto_eligible" else None,
         })

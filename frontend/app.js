@@ -139,7 +139,8 @@ async function messages() {
   let requests=[]; if(receipts.length) requests=await request('/api/maintenance/requests');
   html+='<section class="card"><h2>Your conversation</h2><p class="hint">Routine replies appear here immediately. Replies awaiting manager review remain private. Notification delivery is tracked separately.</p>'+(receipts.length?receipts.map(r=>{
     const linked=requests.find(v=>v.message_id===r.message_id);
-    return '<article class="inbox-item"><p>'+esc(r.content)+'</p><dl><dt>Message ID</dt><dd><code>'+esc(r.message_id)+'</code></dd><dt>Reply status</dt><dd>'+badge(r.reply_status)+'</dd><dt>Delivery status</dt><dd>'+badge(r.delivery_status)+'</dd><dt>Classification</dt><dd>Unavailable from the submission API</dd><dt>Emergency</dt><dd>'+(linked?esc(String(linked.emergency_flag))+' (Maintenance record)':'Unavailable')+'</dd><dt>Routing</dt><dd>'+(linked?'Maintenance · '+esc(linked.request_id):'Unavailable; no verified request link')+'</dd></dl>'+notice(r.reply_status==='pending_review'?'A manager must review this reply. It has not been sent.':r.reply_status==='auto_eligible'?'Eligible for automatic delivery. The submission response does not confirm queue acceptance or delivery.':'Human handling may be required. No delivery is confirmed.')+(linked?button('View maintenance request','request',linked.request_id):'')+technical({message_id:r.message_id,reply_status:r.reply_status,delivery_status:r.delivery_status})+'</article>';
+    if(r.category==='smalltalk' && r.reply_content) return '<article class="inbox-item"><strong>You</strong><p>'+esc(r.content)+'</p></article>';
+    return '<article class="inbox-item"><p>'+esc(r.content)+'</p><dl><dt>Message ID</dt><dd><code>'+esc(r.message_id)+'</code></dd><dt>Reply status</dt><dd>'+badge(r.reply_status)+'</dd><dt>Delivery status</dt><dd>'+badge(r.delivery_status)+'</dd><dt>Classification</dt><dd>Unavailable from the submission API</dd><dt>Emergency</dt><dd>'+(linked?esc(String(linked.emergency_flag))+' (Maintenance record)':'Unavailable')+'</dd><dt>Routing</dt><dd>'+(linked?'Maintenance · '+esc(linked.request_id):'Unavailable; no verified request link')+'</dd></dl>'+notice(r.reply_status==='pending_review'?'A manager must review this reply. It has not been sent.':r.reply_status==='auto_eligible'?'This reply is available in your conversation. It is not sent to Notifications.':'Human handling may be required. No delivery is confirmed.')+(linked?button('View maintenance request','request',linked.request_id):'')+technical({message_id:r.message_id,reply_status:r.reply_status,delivery_status:r.delivery_status})+'</article>';
   }).map((card,i)=>card+(receipts[i].reply_content?'<section class="notice"><strong>RentMate</strong><p>'+esc(receipts[i].reply_content)+'</p></section>':'')).join(''):empty('Your submitted messages will appear here.'))+'</section>';
   return html;
 }
@@ -270,7 +271,20 @@ function openSession() {
 }
 const modelResult=(message,error=false)=>$('modelSettingsResult').innerHTML='<div class="notice '+(error?'error':'')+'">'+esc(message)+'</div>';
 let modelEpoch=0;
+let modelStatusToken='';
+async function refreshModelBadge() {
+  const token=state.scheduler || modelStatusToken;
+  if(!token) return;
+  try {
+    const result=await api('/api/ops/llm/settings',{token});
+    $('modelSettingsButton').textContent=result.connection_verified?'Qwen · Verified':result.configured?'Qwen · Not tested':'Qwen · Not configured';
+  } catch {
+    $('modelSettingsButton').textContent='Qwen · Status unavailable';
+  }
+}
+if(globalThis.setInterval) globalThis.setInterval(refreshModelBadge,15000);
 function showModelStatus(result) {
+  $('modelSettingsButton').textContent=result.connection_verified?'Qwen · Verified':result.configured?'Qwen · Not tested':'Qwen · Not configured';
   const f=$('modelSettingsForm'); f.elements.base_url.value=result.base_url; f.elements.model.value=result.model;
   modelResult('Configuration '+(result.configured?'ready':'incomplete')+' · API key '+(result.api_key_configured?'configured':'not configured')+' · Source: '+result.source+'. Live inference has not been tested by this status read.');
 }
@@ -280,6 +294,7 @@ async function modelAction(control, action) {
   const controls=Array.from(f.querySelectorAll('button')); controls.forEach(b=>b.disabled=true); f.dataset.busy='true';
   try {
     const token=f.elements.operator_token.value.trim();
+    modelStatusToken=token;
     const call=async(path,options={})=>{const value=await contextualApi(path,{token,...options},context); if(epoch!==modelEpoch) throw new StaleContextError(); return value;};
     if(action==='load') showModelStatus(await call('/api/ops/llm/settings'));
     if(action==='save') {
@@ -288,14 +303,16 @@ async function modelAction(control, action) {
     }
     if(action==='test') {
       modelResult('Calling the configured model. This may take up to the server timeout…');
+      $('modelSettingsButton').textContent='Qwen · Testing…';
       const result=await call('/api/ops/llm/test',{method:'POST'});
+      showModelStatus(await call('/api/ops/llm/settings'));
       modelResult('Real model returned a validated response. Source: '+result.source+' · Classification: '+result.category+'. This verifies the connection, not every domain workflow.');
     }
     if(action==='restore') {
       if(!confirm('Restore the running server’s startup environment settings?')) return;
       showModelStatus(await call('/api/ops/llm/settings',{method:'DELETE'}));
     }
-  } catch(error) { if(!error.stale && isCurrent(context) && epoch===modelEpoch) modelResult(errorMessage(error),true); }
+  } catch(error) { if(!error.stale && isCurrent(context) && epoch===modelEpoch) { $('modelSettingsButton').textContent='Qwen · Check connection'; modelResult(errorMessage(error),true); } }
   finally { if(epoch===modelEpoch) { f.elements.api_key.value=''; f.dataset.busy='false'; controls.forEach(b=>b.disabled=false); } }
 }
 $('modelSettingsButton').onclick=()=>{

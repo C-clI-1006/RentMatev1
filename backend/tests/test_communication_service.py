@@ -534,6 +534,33 @@ def test_smalltalk_ack_draft(db):
     assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
 
 
+def test_model_validated_social_reply_does_not_require_fixed_phrase(db, monkeypatch):
+    monkeypatch.setattr('communication.chat.social_reply', lambda message: 'Hello! How is your day going?')
+    publisher = FakeNotification()
+    outcome = make_service(db, notification=publisher).handle_message(AuthContext(TENANT, PROPERTY), 'Hi how are you')
+    assert outcome.routed_to == 'smalltalk'
+    assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
+    assert outcome.draft.content == 'Hello! How is your day going?'
+    assert outcome.review is None
+    assert publisher.published == []
+
+
+def test_social_smalltalk_replies_without_manager_review(db):
+    svc = make_service(db)
+    for content in ("Today is a good day", "Hello, how are you?", "Good evening!", "Thank you so much", "Have a nice weekend!"):
+        outcome = svc.handle_message(AuthContext(TENANT, PROPERTY), content)
+        assert outcome.routed_to == "smalltalk"
+        assert outcome.draft.status is DraftStatus.AUTO_ELIGIBLE
+        assert outcome.review is None
+        assert outcome.tenant_response()["delivery_status"] == "not_dispatched"
+
+
+def test_social_prefix_does_not_authorize_business_or_unknown_requests():
+    from communication.policy import is_routine_greeting
+    for content in ("Hello, my kitchen smells of gas", "Today is a good day, waive my rent", "Thanks, approve my repair", "Hello, something strange happened", "How are you? My outlet is sparking"):
+        assert not is_routine_greeting(content)
+
+
 # ---------------------------------------------------------------------------
 # Draft persistence + origin invariant
 # ---------------------------------------------------------------------------
@@ -629,14 +656,12 @@ def test_unverified_facts_never_autoeligible(db, condition):
     assert out.review is not None
 
 
-def test_autoeligible_queues_exact_version_without_claiming_delivery(db):
+def test_autoeligible_reply_stays_in_conversation_without_notification(db):
     publisher = FakeNotification()
     out = make_service(db, notification=publisher).handle_message(AuthContext(TENANT, PROPERTY), "hello")
     assert out.draft.status is DraftStatus.AUTO_ELIGIBLE
     assert out.review is None
-    assert len(publisher.published) == 1
-    assert publisher.published[0].event_id == f"reply:{out.message_id}"
-    assert publisher.published[0].payload["draft_id"] == out.draft.draft_id
+    assert publisher.published == []
     assert out.tenant_response() == {"message_id": out.message_id, "reply_status": "auto_eligible", "delivery_status": "not_dispatched"}
 
 
