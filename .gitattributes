@@ -1,0 +1,2 @@
+# Preserve PDF bytes during checkout and archive export on every platform.
+*.pdf binary
